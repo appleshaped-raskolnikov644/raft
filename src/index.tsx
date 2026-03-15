@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { createCliRenderer } from "@opentui/core"
 import { createRoot } from "@opentui/react"
+import { useKeyboard, useRenderer } from "@opentui/react"
 import { LsCommand } from "./commands/ls"
 import { StackCommand } from "./commands/stack"
 
@@ -33,6 +34,12 @@ function parseArgs(argv: string[]): {
 }
 
 function HelpScreen() {
+  const renderer = useRenderer()
+  useKeyboard((key) => {
+    if (key.name === "q" || key.name === "escape") {
+      renderer.destroy()
+    }
+  })
   return (
     <box flexDirection="column" padding={2}>
       <text>
@@ -83,9 +90,10 @@ const renderer = await createCliRenderer({
   exitOnCtrlC: false,
 })
 
-// Global quit: q, Escape, or Ctrl+C exits from any screen
+// Hard quit: only Ctrl+C is the universal escape hatch.
+// q and Escape are handled by individual commands (context-sensitive).
 renderer.keyInput.on("keypress", (key) => {
-  if (key.name === "q" || key.name === "escape" || (key.ctrl && key.name === "c")) {
+  if (key.ctrl && key.name === "c") {
     renderer.destroy()
   }
 })

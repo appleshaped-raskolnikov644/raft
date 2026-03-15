@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { useKeyboard, useRenderer } from "@opentui/react"
 import { fetchRepoPRs, fetchOpenPRs, getCurrentRepo, updatePRTitle, upsertStackComment } from "../lib/github"
 import { detectStacks, buildStackComment, formatStackedTitle } from "../lib/stack"
 import type { Stack } from "../lib/types"
@@ -49,10 +50,17 @@ function StackView({ stack, syncing }: { stack: Stack; syncing: boolean }) {
 }
 
 export function StackCommand({ repo, sync }: StackCommandProps) {
+  const renderer = useRenderer()
   const [stacks, setStacks] = useState<Stack[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncDone, setSyncDone] = useState(false)
+
+  useKeyboard((key) => {
+    if (key.name === "q" || key.name === "escape") {
+      renderer.destroy()
+    }
+  })
 
   useEffect(() => {
     async function load() {

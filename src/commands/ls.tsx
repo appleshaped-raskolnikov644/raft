@@ -99,7 +99,9 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
     }
 
     // Normal mode
-    if (key.name === "j" || key.name === "down") {
+    if (key.name === "q" || key.name === "escape") {
+      renderer.destroy()
+    } else if (key.name === "j" || key.name === "down") {
       setSelectedIndex((i) => Math.min(filteredPRs.length - 1, i + 1))
     } else if (key.name === "k" || key.name === "up") {
       setSelectedIndex((i) => Math.max(0, i - 1))
