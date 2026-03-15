@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { fetchRepoPRs, getCurrentRepo, updatePRTitle, upsertStackComment } from "../lib/github"
+import { fetchRepoPRs, fetchOpenPRs, getCurrentRepo, updatePRTitle, upsertStackComment } from "../lib/github"
 import { detectStacks, buildStackComment, formatStackedTitle } from "../lib/stack"
 import type { Stack } from "../lib/types"
 
@@ -57,19 +57,46 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   useEffect(() => {
     async function load() {
       try {
-        const targetRepo = repo ?? await getCurrentRepo()
-        if (!targetRepo) {
-          setError("Not in a git repo and no --repo specified")
-          return
+        let allStacks: Stack[] = []
+
+        if (repo) {
+          // Explicit repo specified
+          const prs = await fetchRepoPRs(repo)
+          allStacks = detectStacks(prs)
+        } else {
+          // Try current repo first; if not in one, scan all repos
+          const currentRepo = await getCurrentRepo()
+          if (currentRepo) {
+            const prs = await fetchRepoPRs(currentRepo)
+            allStacks = detectStacks(prs)
+          } else {
+            // Not in a repo: fetch all PRs, group by repo, detect stacks in each
+            const allPRs = await fetchOpenPRs()
+            const byRepo = new Map<string, typeof allPRs>()
+            for (const pr of allPRs) {
+              const existing = byRepo.get(pr.repo) ?? []
+              existing.push(pr)
+              byRepo.set(pr.repo, existing)
+            }
+            // For repos with 2+ PRs, fetch full PR data (with branch info) and detect stacks
+            for (const [repoName, prs] of byRepo) {
+              if (prs.length < 2) continue
+              try {
+                const repoPRs = await fetchRepoPRs(repoName)
+                const repoStacks = detectStacks(repoPRs)
+                allStacks.push(...repoStacks)
+              } catch {
+                // Can't access this repo with any account, skip
+              }
+            }
+          }
         }
 
-        const prs = await fetchRepoPRs(targetRepo)
-        const detected = detectStacks(prs)
-        setStacks(detected)
+        setStacks(allStacks)
 
-        if (sync && detected.length > 0) {
+        if (sync && allStacks.length > 0) {
           setSyncing(true)
-          for (const stack of detected) {
+          for (const stack of allStacks) {
             for (const pr of stack.prs) {
               const newTitle = formatStackedTitle(pr.position, pr.stackSize, pr.originalTitle)
               await updatePRTitle(stack.repo, pr.number, newTitle)
@@ -98,7 +125,7 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   if (stacks === null) {
     return (
       <box padding={1}>
-        <text fg="#888888">Detecting stacks...</text>
+        <text fg="#888888">Detecting stacks across your repos...</text>
       </box>
     )
   }

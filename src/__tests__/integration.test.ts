@@ -1,4 +1,7 @@
-import { test, expect, describe } from "bun:test"
+import { test, expect, describe, setDefaultTimeout } from "bun:test"
+
+// Multi-account fetching takes longer
+setDefaultTimeout(30_000)
 import { fetchOpenPRs, fetchRepoPRs } from "../lib/github"
 import { detectStacks, buildStackComment, formatStackedTitle } from "../lib/stack"
 import { stripStackPrefix } from "../lib/github"
