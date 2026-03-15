@@ -1,16 +1,18 @@
-import { useState, useEffect } from "react"
-import { useKeyboard, useRenderer } from "@opentui/react"
-import { fetchRepoPRs, fetchOpenPRs, getCurrentRepo, updatePRTitle, upsertStackComment } from "../lib/github"
+import { useState, useEffect, useMemo, useRef } from "react"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { fetchRepoPRs, fetchOpenPRs, getCurrentRepo, updatePRTitle, upsertStackComment, fetchPRPanelData } from "../lib/github"
 import { detectStacks, buildStackComment, formatStackedTitle } from "../lib/stack"
 import { Spinner } from "../components/spinner"
-import type { Stack } from "../lib/types"
+import { PreviewPanel } from "../components/preview-panel"
+import { PRCache } from "../lib/cache"
+import type { Stack, PullRequest, PanelTab, PRPanelData } from "../lib/types"
 
 interface StackCommandProps {
   repo?: string
   sync: boolean
 }
 
-function StackView({ stack, syncing }: { stack: Stack; syncing: boolean }) {
+function StackView({ stack, syncing, selectedPR }: { stack: Stack; syncing: boolean; selectedPR: PullRequest | null }) {
   return (
     <box flexDirection="column" paddingBottom={1}>
       <box paddingX={1} paddingBottom={1}>
@@ -21,26 +23,35 @@ function StackView({ stack, syncing }: { stack: Stack; syncing: boolean }) {
           <span fg="#9aa5ce"> ({stack.prs.length} PRs)</span>
         </text>
       </box>
-      {stack.prs.map((pr) => (
-        <box key={pr.number} flexDirection="row" paddingX={2}>
-          <box width={8}>
-            <text fg="#bb9af7">[{pr.position}/{pr.stackSize}]</text>
+      {stack.prs.map((pr) => {
+        const isSelected = selectedPR?.url === pr.url
+        const bgColor = isSelected ? "#292e42" : "transparent"
+        const cursor = isSelected ? "▸ " : "  "
+
+        return (
+          <box key={pr.number} flexDirection="row" paddingX={2} backgroundColor={bgColor}>
+            <box width={2}>
+              <text fg={isSelected ? "#7aa2f7" : "transparent"}>{cursor}</text>
+            </box>
+            <box width={8}>
+              <text fg="#bb9af7">[{pr.position}/{pr.stackSize}]</text>
+            </box>
+            <box width={8}>
+              <text>
+                <span fg="#7aa2f7">#{pr.number}</span>
+              </text>
+            </box>
+            <box flexGrow={1}>
+              <text fg="#c0caf5">{pr.originalTitle}</text>
+            </box>
+            <box width={8}>
+              <text fg={pr.isDraft ? "#6b7089" : "#9ece6a"}>
+                {pr.isDraft ? "DRAFT" : "OPEN"}
+              </text>
+            </box>
           </box>
-          <box width={8}>
-            <text>
-              <span fg="#7aa2f7">#{pr.number}</span>
-            </text>
-          </box>
-          <box flexGrow={1}>
-            <text fg="#c0caf5">{pr.originalTitle}</text>
-          </box>
-          <box width={8}>
-            <text fg={pr.isDraft ? "#6b7089" : "#9ece6a"}>
-              {pr.isDraft ? "DRAFT" : "OPEN"}
-            </text>
-          </box>
-        </box>
-      ))}
+        )
+      })}
       {syncing && (
         <box paddingX={1} paddingTop={1}>
           <Spinner text="Syncing stack metadata..." color="#e0af68" />
@@ -52,15 +63,137 @@ function StackView({ stack, syncing }: { stack: Stack; syncing: boolean }) {
 
 export function StackCommand({ repo, sync }: StackCommandProps) {
   const renderer = useRenderer()
+  const { width: termWidth, height: termHeight } = useTerminalDimensions()
   const [stacks, setStacks] = useState<Stack[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncDone, setSyncDone] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState("Detecting stacks across your repos...")
 
+  // Selection and panel state
+  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelTab, setPanelTab] = useState<PanelTab>("body")
+  const [panelScroll, setPanelScroll] = useState(0)
+  const [splitRatio, setSplitRatio] = useState(0.6)
+  const [panelData, setPanelData] = useState<PRPanelData | null>(null)
+  const [panelLoading, setPanelLoading] = useState(false)
+  const [panelContentHeight, setPanelContentHeight] = useState(0)
+  const cacheRef = useRef(new PRCache())
+
+  // Flatten all PRs for navigation
+  const allPRs = useMemo(() => {
+    if (!stacks) return []
+    return stacks.flatMap(stack => stack.prs)
+  }, [stacks])
+
+  const selectedPR = allPRs[selectedIndex] ?? null
+
+  // Panel data fetching
+  useEffect(() => {
+    if (!panelOpen || !selectedPR) return
+
+    const cache = cacheRef.current
+    const cached = cache.getPanelData(selectedPR.url)
+    if (cached) {
+      setPanelData(cached)
+      setPanelLoading(false)
+      return
+    }
+
+    setPanelLoading(true)
+    setPanelData(null)
+    fetchPRPanelData(selectedPR.repo, selectedPR.number)
+      .then((data) => {
+        cache.setPanelData(selectedPR.url, data)
+        setPanelData(data)
+      })
+      .catch(() => setPanelData(null))
+      .finally(() => setPanelLoading(false))
+  }, [panelOpen, selectedPR?.url])
+
+  // Prefetch neighbors
+  useEffect(() => {
+    if (!panelOpen) return
+    const cache = cacheRef.current
+
+    const neighbors = [allPRs[selectedIndex - 1], allPRs[selectedIndex + 1]].filter(Boolean)
+    for (const pr of neighbors) {
+      if (!cache.hasPanelData(pr.url)) {
+        fetchPRPanelData(pr.repo, pr.number)
+          .then((data) => cache.setPanelData(pr.url, data))
+          .catch(() => {})
+      }
+    }
+  }, [panelOpen, selectedIndex, allPRs])
+
   useKeyboard((key) => {
+    if (panelOpen) {
+      // Panel mode: j/k for scroll, up/down for PR nav, 1/2/3 for tabs
+      const maxScroll = Math.max(0, panelContentHeight - (termHeight - 6))
+      const scrollSpeed = key.shift ? 5 : 1
+
+      if (key.name === "j") {
+        setPanelScroll((s) => Math.min(maxScroll, s + scrollSpeed))
+      } else if (key.name === "k") {
+        setPanelScroll((s) => Math.max(0, s - scrollSpeed))
+      } else if (key.name === "down") {
+        setSelectedIndex((i) => Math.min(allPRs.length - 1, i + 1))
+        setPanelScroll(0)
+      } else if (key.name === "up") {
+        setSelectedIndex((i) => Math.max(0, i - 1))
+        setPanelScroll(0)
+      } else if (key.name === "1") {
+        setPanelTab("body")
+        setPanelScroll(0)
+      } else if (key.name === "2") {
+        setPanelTab("comments")
+        setPanelScroll(0)
+      } else if (key.name === "3") {
+        setPanelTab("code")
+        setPanelScroll(0)
+      } else if (key.name === "tab") {
+        setPanelTab((t) => {
+          if (t === "body") return "comments"
+          if (t === "comments") return "code"
+          return "body"
+        })
+        setPanelScroll(0)
+      } else if (key.name === "+" || key.name === "=" || key.sequence === "+") {
+        setSplitRatio((r) => Math.min(0.8, r + 0.1))
+      } else if (key.name === "-" || key.name === "_" || key.sequence === "-") {
+        setSplitRatio((r) => Math.max(0.3, r - 0.1))
+      } else if (key.name === "p" || key.name === "escape") {
+        setPanelOpen(false)
+      } else if (key.name === "enter" || key.name === "return") {
+        if (selectedPR) {
+          Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
+        }
+      } else if (key.name === "c" && selectedPR) {
+        renderer.copyToClipboardOSC52(selectedPR.url)
+      } else if (key.name === "q") {
+        renderer.destroy()
+      }
+      return
+    }
+
+    // Normal mode
     if (key.name === "q" || key.name === "escape") {
       renderer.destroy()
+    } else if (key.name === "j" || key.name === "down") {
+      setSelectedIndex((i) => Math.min(allPRs.length - 1, i + 1))
+    } else if (key.name === "k" || key.name === "up") {
+      setSelectedIndex((i) => Math.max(0, i - 1))
+    } else if (key.name === "p") {
+      setPanelOpen(true)
+      setPanelScroll(0)
+      setPanelTab("body")
+    } else if (key.name === "enter" || key.name === "return") {
+      if (selectedPR) {
+        Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
+      }
+    } else if (key.name === "c" && selectedPR) {
+      renderer.copyToClipboardOSC52(selectedPR.url)
     }
   })
 
@@ -149,17 +282,41 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
 
   return (
     <box flexDirection="column" width="100%" height="100%">
-      {stacks.map((stack, i) => (
-        <StackView key={i} stack={stack} syncing={syncing} />
-      ))}
-      {syncDone && (
-        <box paddingX={1}>
-          <text fg="#9ece6a">Stack synced! Titles and comments updated.</text>
+      {panelOpen && selectedPR ? (
+        <box flexDirection="row" flexGrow={1}>
+          <box flexDirection="column" width={Math.floor(termWidth * (1 - splitRatio))}>
+            {stacks.map((stack, i) => (
+              <StackView key={i} stack={stack} syncing={syncing} selectedPR={selectedPR} />
+            ))}
+          </box>
+          <PreviewPanel
+            pr={selectedPR}
+            panelData={panelData}
+            loading={panelLoading}
+            tab={panelTab}
+            scrollOffset={panelScroll}
+            width={Math.floor(termWidth * splitRatio)}
+            height={termHeight - 2}
+            onContentHeight={setPanelContentHeight}
+          />
         </box>
+      ) : (
+        <>
+          {stacks.map((stack, i) => (
+            <StackView key={i} stack={stack} syncing={syncing} selectedPR={selectedPR} />
+          ))}
+          {syncDone && (
+            <box paddingX={1}>
+              <text fg="#9ece6a">Stack synced! Titles and comments updated.</text>
+            </box>
+          )}
+          <box paddingX={1} paddingTop={1}>
+            <text fg="#6b7089">
+              j/k: navigate {"\u00B7"} p: preview {"\u00B7"} Enter: open {"\u00B7"} c: copy {"\u00B7"} q: exit
+            </text>
+          </box>
+        </>
       )}
-      <box paddingX={1} paddingTop={1}>
-        <text fg="#6b7089">Press q to exit</text>
-      </box>
     </box>
   )
 }
