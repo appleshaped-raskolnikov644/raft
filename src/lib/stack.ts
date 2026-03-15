@@ -1,17 +1,16 @@
 import type { PullRequest, Stack, StackedPR } from "./types"
 import { stripStackPrefix } from "./github"
 
-const TRUNK_BRANCHES = new Set(["main", "master", "develop", "dev"])
-
 export function detectStacks(prs: PullRequest[]): Stack[] {
   if (prs.length === 0) return []
 
+  // Map: headRefName -> PR (each PR "owns" its head branch)
   const headToPR = new Map<string, PullRequest>()
   for (const pr of prs) {
     headToPR.set(pr.headRefName, pr)
   }
 
-  // Build adjacency: parent's headRefName -> child PR
+  // Build parent -> child: if a PR's base is another PR's head, it's a child
   const children = new Map<string, PullRequest>()
   for (const pr of prs) {
     if (headToPR.has(pr.baseRefName)) {
@@ -19,12 +18,13 @@ export function detectStacks(prs: PullRequest[]): Stack[] {
     }
   }
 
-  // Stack roots: PRs targeting trunk that have at least one child
+  // A root is any PR that has a child AND whose base is NOT another PR's head.
+  // This means the root targets a non-PR branch (main, release/*, develop, etc.)
   const roots: PullRequest[] = []
   for (const pr of prs) {
-    const isTrunkBase = TRUNK_BRANCHES.has(pr.baseRefName)
     const hasChild = children.has(pr.headRefName)
-    if (isTrunkBase && hasChild) {
+    const baseIsAnotherPR = headToPR.has(pr.baseRefName)
+    if (hasChild && !baseIsAnotherPR) {
       roots.push(pr)
     }
   }
