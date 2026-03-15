@@ -232,7 +232,7 @@ export function PRTable({ prs, selectedIndex, density, detailsMap, onSelect }: P
   return (
     <box flexDirection="column" width="100%">
       {prs.map((pr, i) => {
-        const prKey = `${pr.repo}#${pr.number}`
+        const prKey = pr.url
         const details = detailsMap?.get(prKey)
 
         return (
