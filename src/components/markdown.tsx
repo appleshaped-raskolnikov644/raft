@@ -1,3 +1,5 @@
+import React from "react"
+
 export type MdLine =
   | { type: "header"; text: string; level: number }
   | { type: "list"; text: string }
@@ -67,7 +69,7 @@ export function MarkdownView({ content, width, scrollOffset, maxLines }: Markdow
   const lines = parseMarkdownLines(content)
 
   // Flatten to renderable lines with styles
-  const rendered: { key: string; element: JSX.Element }[] = []
+  const rendered: { key: string; element: React.ReactNode }[] = []
   let lineIdx = 0
 
   for (const line of lines) {
