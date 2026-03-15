@@ -104,13 +104,18 @@ async function switchAccount(username: string): Promise<void> {
 /** Fetch open PRs across all gh accounts, deduped by URL.
  *  Switches accounts and uses @me for each, since the GitHub username
  *  may not match the PR author (e.g., org-linked accounts). */
-export async function fetchAllAccountPRs(): Promise<PullRequest[]> {
+export async function fetchAllAccountPRs(
+  onProgress?: (status: string) => void,
+): Promise<PullRequest[]> {
+  onProgress?.("Discovering accounts...")
   const accounts = await getGhAccounts()
   const originalAccount = await getActiveAccount()
   const allPRs: PullRequest[] = []
   const seen = new Set<string>()
 
-  for (const account of accounts) {
+  for (let i = 0; i < accounts.length; i++) {
+    const account = accounts[i]
+    onProgress?.(`Fetching PRs for ${account} (${i + 1}/${accounts.length})...`)
     if (accounts.length > 1) {
       try { await switchAccount(account) } catch { continue }
     }
@@ -123,15 +128,19 @@ export async function fetchAllAccountPRs(): Promise<PullRequest[]> {
         "--json", "number,title,url,body,state,repository,isDraft,createdAt",
       ])
       if (json) {
-        for (const pr of parseSearchResults(json)) {
+        const parsed = parseSearchResults(json)
+        for (const pr of parsed) {
           if (!seen.has(pr.url)) {
             seen.add(pr.url)
             allPRs.push(pr)
           }
         }
+        onProgress?.(`Found ${allPRs.length} PRs so far...`)
       }
     } catch { /* skip account if query fails */ }
   }
+
+  onProgress?.(`Loaded ${allPRs.length} PRs across ${accounts.length} accounts`)
 
   // Restore original account
   if (accounts.length > 1 && originalAccount) {
@@ -141,8 +150,12 @@ export async function fetchAllAccountPRs(): Promise<PullRequest[]> {
   return allPRs
 }
 
-export async function fetchOpenPRs(author?: string): Promise<PullRequest[]> {
+export async function fetchOpenPRs(
+  author?: string,
+  onProgress?: (status: string) => void,
+): Promise<PullRequest[]> {
   if (author) {
+    onProgress?.(`Fetching PRs for ${author}...`)
     const json = await runGh([
       "search", "prs",
       `--author=${author}`,
@@ -153,8 +166,7 @@ export async function fetchOpenPRs(author?: string): Promise<PullRequest[]> {
     if (!json) return []
     return parseSearchResults(json)
   }
-  // No author specified: fetch from all accounts
-  return fetchAllAccountPRs()
+  return fetchAllAccountPRs(onProgress)
 }
 
 /** Try fetching repo PRs, attempting each account if needed. */

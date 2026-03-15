@@ -36,6 +36,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [repoFilter, setRepoFilter] = useState<string | null>(initialRepoFilter ?? null)
   const [currentRepo, setCurrentRepo] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<SortMode>("repo")
+  const [loadingStatus, setLoadingStatus] = useState("Loading PRs...")
   const [flash, setFlash] = useState<string | null>(null)
 
   // Detect current repo on mount
@@ -54,7 +55,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   useEffect(() => {
     async function load() {
       try {
-        let results = await fetchOpenPRs(author)
+        let results = await fetchOpenPRs(author, setLoadingStatus)
         results.sort((a, b) => {
           const repoCompare = a.repo.localeCompare(b.repo)
           if (repoCompare !== 0) return repoCompare
@@ -228,7 +229,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     return (
       <box flexDirection="column" width="100%" height="100%">
         <box paddingX={1} height={1}>
-          <Spinner text="Loading PRs across all accounts..." />
+          <Spinner text={loadingStatus} />
         </box>
         <box height={1} />
         <SkeletonList rows={12} />
