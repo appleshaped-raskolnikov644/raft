@@ -102,17 +102,22 @@ async function switchAccount(username: string): Promise<void> {
 }
 
 /** Fetch open PRs across all gh accounts, deduped by URL.
- *  Uses --author=<username> instead of switching accounts, so no side effects. */
+ *  Switches accounts and uses @me for each, since the GitHub username
+ *  may not match the PR author (e.g., org-linked accounts). */
 export async function fetchAllAccountPRs(): Promise<PullRequest[]> {
   const accounts = await getGhAccounts()
+  const originalAccount = await getActiveAccount()
   const allPRs: PullRequest[] = []
   const seen = new Set<string>()
 
   for (const account of accounts) {
+    if (accounts.length > 1) {
+      try { await switchAccount(account) } catch { continue }
+    }
     try {
       const json = await runGh([
         "search", "prs",
-        `--author=${account}`,
+        "--author=@me",
         "--state=open",
         "--limit=100",
         "--json", "number,title,url,body,state,repository,isDraft,createdAt",
@@ -126,6 +131,11 @@ export async function fetchAllAccountPRs(): Promise<PullRequest[]> {
         }
       }
     } catch { /* skip account if query fails */ }
+  }
+
+  // Restore original account
+  if (accounts.length > 1 && originalAccount) {
+    try { await switchAccount(originalAccount) } catch { /* ignore */ }
   }
 
   return allPRs

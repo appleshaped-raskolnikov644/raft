@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
-import { useKeyboard, useRenderer } from "@opentui/react"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
-import { fetchOpenPRs } from "../lib/github"
+import { fetchOpenPRs, getCurrentRepo } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import type { PullRequest } from "../lib/types"
 
@@ -14,8 +14,9 @@ interface LsCommandProps {
 
 type StatusFilter = "all" | "open" | "draft"
 
-export function LsCommand({ author, repoFilter }: LsCommandProps) {
+export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandProps) {
   const renderer = useRenderer()
+  const { height: termHeight } = useTerminalDimensions()
   const [allPRs, setAllPRs] = useState<PullRequest[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -23,16 +24,27 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   const [searchMode, setSearchMode] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
+  const [repoFilter, setRepoFilter] = useState<string | null>(initialRepoFilter ?? null)
+  const [currentRepo, setCurrentRepo] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
+
+  // Detect current repo on mount
+  useEffect(() => {
+    getCurrentRepo().then((repo) => {
+      if (repo) {
+        setCurrentRepo(repo)
+        // Auto-filter to current repo if no explicit filter
+        if (!initialRepoFilter) {
+          setRepoFilter(repo)
+        }
+      }
+    })
+  }, [initialRepoFilter])
 
   useEffect(() => {
     async function load() {
       try {
         let results = await fetchOpenPRs(author)
-        if (repoFilter) {
-          const filter = repoFilter.toLowerCase()
-          results = results.filter((pr) => pr.repo.toLowerCase().includes(filter))
-        }
         results.sort((a, b) => {
           const repoCompare = a.repo.localeCompare(b.repo)
           if (repoCompare !== 0) return repoCompare
@@ -46,12 +58,24 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
       }
     }
     load()
-  }, [author, repoFilter])
+  }, [author])
+
+  // Get unique repos for cycling
+  const repos = useMemo(() => {
+    const set = [...new Set(allPRs.map((pr) => pr.repo))].sort()
+    return set
+  }, [allPRs])
 
   const filteredPRs = useMemo(() => {
     let prs = allPRs
+    // Repo filter
+    if (repoFilter) {
+      prs = prs.filter((pr) => pr.repo === repoFilter)
+    }
+    // Status filter
     if (statusFilter === "open") prs = prs.filter((pr) => !pr.isDraft)
     if (statusFilter === "draft") prs = prs.filter((pr) => pr.isDraft)
+    // Search filter
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
       prs = prs.filter((pr) =>
@@ -62,7 +86,7 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
       )
     }
     return prs
-  }, [allPRs, statusFilter, searchQuery])
+  }, [allPRs, repoFilter, statusFilter, searchQuery])
 
   useEffect(() => {
     if (selectedIndex >= filteredPRs.length) {
@@ -72,19 +96,27 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
 
   const selectedPR = filteredPRs[selectedIndex] ?? null
 
+  // Compute visible window: reserve 7 lines for header/tabs/repo/search/detail/keybinds
+  const listHeight = Math.max(3, termHeight - 9)
+  const scrollOffset = useMemo(() => {
+    if (selectedIndex < listHeight) return 0
+    return selectedIndex - listHeight + 1
+  }, [selectedIndex, listHeight])
+  const visiblePRs = filteredPRs.slice(scrollOffset, scrollOffset + listHeight)
+  const visibleSelectedIndex = selectedIndex - scrollOffset
+
   const showFlash = useCallback((msg: string) => {
     setFlash(msg)
     setTimeout(() => setFlash(null), 2000)
   }, [])
 
   const handleSelect = useCallback((index: number) => {
-    setSelectedIndex(index)
-  }, [])
+    setSelectedIndex(scrollOffset + index)
+  }, [scrollOffset])
 
   useKeyboard((key) => {
     if (searchMode) {
       if (key.name === "escape") {
-        // Exit search mode but KEEP the filter active
         setSearchMode(false)
         return
       }
@@ -105,11 +137,8 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
 
     // Normal mode
     if (key.name === "q" || key.name === "escape") {
-      // If there's an active search filter, clear it first instead of quitting
-      if (searchQuery) {
-        setSearchQuery("")
-        return
-      }
+      if (searchQuery) { setSearchQuery(""); return }
+      if (repoFilter && !initialRepoFilter) { setRepoFilter(null); return }
       renderer.destroy()
     } else if (key.name === "j" || key.name === "down") {
       setSelectedIndex((i) => Math.min(filteredPRs.length - 1, i + 1))
@@ -117,7 +146,9 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
       setSelectedIndex((i) => Math.max(0, i - 1))
     } else if (key.name === "enter" && selectedPR) {
       Bun.spawn(["open", selectedPR.url], {
-        stdout: "ignore", stderr: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        env: { ...process.env },
       })
       showFlash("Opening in browser...")
     } else if (key.name === "c" && selectedPR) {
@@ -132,6 +163,19 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
         if (f === "open") return "draft"
         return "all"
       })
+      setSelectedIndex(0)
+    } else if (key.name === "r") {
+      // Cycle repo filter: null -> repo1 -> repo2 -> ... -> null
+      if (repoFilter === null) {
+        if (repos.length > 0) setRepoFilter(repos[0])
+      } else {
+        const idx = repos.indexOf(repoFilter)
+        if (idx >= 0 && idx < repos.length - 1) {
+          setRepoFilter(repos[idx + 1])
+        } else {
+          setRepoFilter(null)
+        }
+      }
       setSelectedIndex(0)
     }
   })
@@ -169,7 +213,7 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
           </text>
         </box>
         <box>
-          <text fg="#9aa5ce">{filteredPRs.length} PRs  /: search  q: quit</text>
+          <text fg="#9aa5ce">{filteredPRs.length} PRs  /: search  r: repo  q: quit</text>
         </box>
       </box>
 
@@ -192,7 +236,17 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
         </box>
       </box>
 
-      {/* Search bar - shown when in search mode OR when there's an active filter */}
+      {/* Repo filter */}
+      {repoFilter && (
+        <box flexDirection="row" paddingX={1} height={1}>
+          <text>
+            <span fg="#bb9af7">repo: {shortRepoName(repoFilter)}</span>
+            <span fg="#9aa5ce"> (r: cycle, Esc: clear)</span>
+          </text>
+        </box>
+      )}
+
+      {/* Search bar */}
       {(searchMode || searchQuery) && (
         <box flexDirection="row" paddingX={1} height={1}>
           <text>
@@ -204,10 +258,17 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
         </box>
       )}
 
-      {/* PR List - no focused prop, we handle scrolling via selection */}
-      <scrollbox flexGrow={1}>
-        <PRTable prs={filteredPRs} selectedIndex={selectedIndex} onSelect={handleSelect} />
-      </scrollbox>
+      {/* PR List - manual windowing, no scrollbox */}
+      <box flexDirection="column" flexGrow={1} overflow="hidden">
+        <PRTable prs={visiblePRs} selectedIndex={visibleSelectedIndex} onSelect={handleSelect} />
+        {filteredPRs.length > listHeight && (
+          <box paddingX={1} height={1}>
+            <text fg="#6b7089">
+              {scrollOffset + 1}-{Math.min(scrollOffset + listHeight, filteredPRs.length)} of {filteredPRs.length}
+            </text>
+          </box>
+        )}
+      </box>
 
       {/* Detail panel */}
       <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>
@@ -237,7 +298,7 @@ export function LsCommand({ author, repoFilter }: LsCommandProps) {
             <text fg="#9ece6a">{flash}</text>
           ) : (
             <text fg="#6b7089">
-              Enter: open  c: copy URL  /: search  Tab: filter  q: quit
+              Enter: open  c: copy URL  /: search  r: repo  Tab: status  q: quit
             </text>
           )}
         </box>

@@ -1,62 +1,32 @@
 import { useState, useEffect } from "react"
 
-const SHIMMER_CHARS = ["\u2591", "\u2592", "\u2593", "\u2592"]
-
-interface SkeletonLineProps {
+interface SkeletonBlockProps {
   width: number
-  delay?: number
+  color?: string
 }
 
-function SkeletonLine({ width, delay = 0 }: SkeletonLineProps) {
-  const [frame, setFrame] = useState(0)
-  const [started, setStarted] = useState(delay === 0)
-
-  useEffect(() => {
-    if (delay > 0) {
-      const timeout = setTimeout(() => setStarted(true), delay)
-      return () => clearTimeout(timeout)
-    }
-  }, [delay])
-
-  useEffect(() => {
-    if (!started) return
-    const interval = setInterval(() => {
-      setFrame((f) => (f + 1) % (width + SHIMMER_CHARS.length))
-    }, 60)
-    return () => clearInterval(interval)
-  }, [started, width])
-
-  if (!started) return <box height={1} width={width} />
-
-  const chars: string[] = []
-  for (let i = 0; i < width; i++) {
-    const shimmerPos = frame - i
-    if (shimmerPos >= 0 && shimmerPos < SHIMMER_CHARS.length) {
-      chars.push(SHIMMER_CHARS[shimmerPos])
-    } else {
-      chars.push("\u2591")
-    }
-  }
-
+function SkeletonBlock({ width, color = "#292e42" }: SkeletonBlockProps) {
   return (
-    <box height={1} width={width}>
-      <text fg="#292e42">{chars.join("")}</text>
+    <box width={width} height={1}>
+      <text fg={color}>{"\u2588".repeat(width)}</text>
     </box>
   )
 }
 
 interface SkeletonRowProps {
-  delay?: number
+  visible: boolean
 }
 
-export function SkeletonRow({ delay = 0 }: SkeletonRowProps) {
+function SkeletonRow({ visible }: SkeletonRowProps) {
+  if (!visible) return <box height={1} />
   return (
     <box flexDirection="row" paddingX={1} height={1} gap={1}>
-      <SkeletonLine width={2} delay={delay} />
-      <SkeletonLine width={5} delay={delay + 30} />
-      <SkeletonLine width={15} delay={delay + 60} />
-      <SkeletonLine width={35} delay={delay + 90} />
-      <SkeletonLine width={4} delay={delay + 120} />
+      <SkeletonBlock width={1} />
+      <SkeletonBlock width={1} />
+      <SkeletonBlock width={5} color="#1f2335" />
+      <SkeletonBlock width={14} color="#24283b" />
+      <SkeletonBlock width={35} color="#292e42" />
+      <SkeletonBlock width={3} color="#1f2335" />
     </box>
   )
 }
@@ -65,11 +35,21 @@ interface SkeletonListProps {
   rows?: number
 }
 
-export function SkeletonList({ rows = 8 }: SkeletonListProps) {
+export function SkeletonList({ rows = 10 }: SkeletonListProps) {
+  const [visibleCount, setVisibleCount] = useState(0)
+
+  useEffect(() => {
+    if (visibleCount >= rows) return
+    const timer = setTimeout(() => {
+      setVisibleCount((c) => c + 1)
+    }, 40)
+    return () => clearTimeout(timer)
+  }, [visibleCount, rows])
+
   return (
     <box flexDirection="column" width="100%">
       {Array.from({ length: rows }, (_, i) => (
-        <SkeletonRow key={i} delay={i * 50} />
+        <SkeletonRow key={i} visible={i < visibleCount} />
       ))}
     </box>
   )
