@@ -22,7 +22,7 @@ const mockPRs: PullRequest[] = [
     repo: "acme/api",
     headRefName: "",
     baseRefName: "",
-    createdAt: new Date(Date.now() - 2 * 86400000).toISOString(), // 2 days ago
+    createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
   },
   {
     number: 7,
@@ -34,7 +34,7 @@ const mockPRs: PullRequest[] = [
     repo: "acme/web",
     headRefName: "",
     baseRefName: "",
-    createdAt: new Date(Date.now() - 14 * 86400000).toISOString(), // 2 weeks ago
+    createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
   },
 ]
 
@@ -61,8 +61,6 @@ test("PRTable shows selection cursor on selected row", async () => {
   )
   await testSetup.renderOnce()
   const frame = testSetup.captureCharFrame()
-
-  // First row should have the cursor indicator
   expect(frame).toContain("\u25B8")
 })
 
@@ -73,8 +71,6 @@ test("PRTable shows status dots", async () => {
   )
   await testSetup.renderOnce()
   const frame = testSetup.captureCharFrame()
-
-  // Filled dot for open, hollow for draft
   expect(frame).toContain("\u25CF")
   expect(frame).toContain("\u25CB")
 })
@@ -86,7 +82,6 @@ test("PRTable shows relative age", async () => {
   )
   await testSetup.renderOnce()
   const frame = testSetup.captureCharFrame()
-
   expect(frame).toContain("2d")
   expect(frame).toContain("2w")
 })
@@ -98,6 +93,30 @@ test("PRTable shows empty message when no PRs", async () => {
   )
   await testSetup.renderOnce()
   const frame = testSetup.captureCharFrame()
-
   expect(frame).toContain("No PRs match")
+})
+
+test("PRTable selection changes highlighted row", async () => {
+  // First PR selected
+  testSetup = await testRender(
+    <PRTable prs={mockPRs} selectedIndex={0} />,
+    { width: 100, height: 10 }
+  )
+  await testSetup.renderOnce()
+  const frame0 = testSetup.captureCharFrame()
+  testSetup.renderer.destroy()
+
+  // Second PR selected
+  testSetup = await testRender(
+    <PRTable prs={mockPRs} selectedIndex={1} />,
+    { width: 100, height: 10 }
+  )
+  await testSetup.renderOnce()
+  const frame1 = testSetup.captureCharFrame()
+
+  // Both frames should have the cursor but at different positions
+  expect(frame0).toContain("\u25B8")
+  expect(frame1).toContain("\u25B8")
+  // The frames should be different (different row highlighted)
+  expect(frame0).not.toBe(frame1)
 })
