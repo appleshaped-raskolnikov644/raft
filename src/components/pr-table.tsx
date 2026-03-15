@@ -38,7 +38,7 @@ function PRRow({ pr, isEven }: { pr: PullRequest; isEven: boolean }) {
 
 function TableHeader() {
   return (
-    <box flexDirection="row" paddingX={1} borderBottom borderColor="#414868">
+    <box flexDirection="row" paddingX={1} border borderColor="#414868">
       <box width={8}>
         <text>
           <strong>PR</strong>
