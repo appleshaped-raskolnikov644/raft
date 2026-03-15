@@ -1,11 +1,12 @@
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
-import { fetchOpenPRs, getCurrentRepo } from "../lib/github"
+import { fetchOpenPRs, getCurrentRepo, fetchPRDetails } from "../lib/github"
 import { shortRepoName } from "../lib/format"
-import type { PullRequest } from "../lib/types"
+import { PRCache } from "../lib/cache"
+import type { PullRequest, Density, PRDetails } from "../lib/types"
 
 interface LsCommandProps {
   author?: string
@@ -38,6 +39,9 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [sortMode, setSortMode] = useState<SortMode>("repo")
   const [loadingStatus, setLoadingStatus] = useState("Loading PRs...")
   const [flash, setFlash] = useState<string | null>(null)
+  const [density, setDensity] = useState<Density>("compact")
+  const [detailsMap, setDetailsMap] = useState<Map<string, PRDetails>>(new Map())
+  const cacheRef = useRef(new PRCache())
 
   // Detect current repo on mount
   useEffect(() => {
@@ -122,10 +126,47 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     }
   }, [filteredPRs.length, selectedIndex])
 
+  useEffect(() => {
+    if (density === "compact" || density === "compressed") return
+    if (filteredPRs.length === 0) return
+
+    const cache = cacheRef.current
+    const toFetch = filteredPRs.filter(pr => !cache.hasDetails(pr.url))
+
+    if (toFetch.length === 0) {
+      // All cached, just update the map
+      const map = new Map<string, PRDetails>()
+      for (const pr of filteredPRs) {
+        const d = cache.getDetails(pr.url)
+        if (d) map.set(pr.url, d)
+      }
+      setDetailsMap(map)
+      return
+    }
+
+    // Fetch missing details
+    Promise.all(
+      toFetch.map(async (pr) => {
+        try {
+          const details = await fetchPRDetails(pr.repo, pr.number)
+          cache.setDetails(pr.url, details)
+        } catch { /* skip on error */ }
+      })
+    ).then(() => {
+      const map = new Map<string, PRDetails>()
+      for (const pr of filteredPRs) {
+        const d = cache.getDetails(pr.url)
+        if (d) map.set(pr.url, d)
+      }
+      setDetailsMap(map)
+    })
+  }, [density, filteredPRs])
+
   const selectedPR = filteredPRs[selectedIndex] ?? null
 
   // Compute visible window: reserve 7 lines for header/tabs/repo/search/detail/keybinds
-  const listHeight = Math.max(3, termHeight - 9)
+  const rowHeight = density === "detailed" ? 2 : 1
+  const listHeight = Math.max(3, Math.floor((termHeight - 9) / rowHeight))
   const scrollOffset = useMemo(() => {
     if (selectedIndex < listHeight) return 0
     return selectedIndex - listHeight + 1
@@ -212,6 +253,12 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         }
       }
       setSelectedIndex(0)
+    } else if (key.name === "v") {
+      setDensity((d) => {
+        if (d === "compact") return "normal"
+        if (d === "normal") return "detailed"
+        return "compact"
+      })
     }
   })
 
@@ -248,7 +295,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           </text>
         </box>
         <box>
-          <text fg="#9aa5ce">{filteredPRs.length} PRs  sort: {SORT_LABELS[sortMode]}</text>
+          <text fg="#9aa5ce">{filteredPRs.length} PRs  sort: {SORT_LABELS[sortMode]}  view: {density}</text>
         </box>
       </box>
 
@@ -295,7 +342,13 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
 
       {/* PR List - manual windowing, no scrollbox */}
       <box flexDirection="column" flexGrow={1} overflow="hidden">
-        <PRTable prs={visiblePRs} selectedIndex={visibleSelectedIndex} density="compact" onSelect={handleSelect} />
+        <PRTable
+          prs={visiblePRs}
+          selectedIndex={visibleSelectedIndex}
+          density={density}
+          detailsMap={detailsMap}
+          onSelect={handleSelect}
+        />
         {filteredPRs.length > listHeight && (
           <box paddingX={1} height={1}>
             <text fg="#6b7089">
@@ -333,7 +386,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             <text fg="#9ece6a">{flash}</text>
           ) : (
             <text fg="#6b7089">
-              Enter: open  c: copy  /: search  r: repo  s: sort  Tab: status  q: quit
+              Enter: open  c: copy  /: search  r: repo  s: sort  v: view  Tab: status  q: quit
             </text>
           )}
         </box>
