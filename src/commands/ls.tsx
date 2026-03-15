@@ -148,7 +148,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         setSearchMode(false)
         return
       }
-      if (key.name === "enter") {
+      if (key.name === "enter" || key.name === "return") {
         setSearchMode(false)
         return
       }
@@ -172,13 +172,14 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       setSelectedIndex((i) => Math.min(filteredPRs.length - 1, i + 1))
     } else if (key.name === "k" || key.name === "up") {
       setSelectedIndex((i) => Math.max(0, i - 1))
-    } else if (key.name === "enter" && selectedPR) {
-      Bun.spawn(["open", selectedPR.url], {
-        stdout: "ignore",
-        stderr: "ignore",
-        env: { ...process.env },
-      })
-      showFlash("Opening in browser...")
+    } else if (key.name === "enter" || key.name === "return") {
+      if (selectedPR) {
+        Bun.spawn(["open", selectedPR.url], {
+          stdout: "ignore",
+          stderr: "ignore",
+        })
+        showFlash("Opening " + selectedPR.url)
+      }
     } else if (key.name === "c" && selectedPR) {
       renderer.copyToClipboardOSC52(selectedPR.url)
       showFlash("Copied URL!")
