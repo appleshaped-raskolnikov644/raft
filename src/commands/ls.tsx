@@ -3,10 +3,11 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
-import { fetchOpenPRs, getCurrentRepo, fetchPRDetails } from "../lib/github"
+import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, fetchPRPanelData } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import { PRCache } from "../lib/cache"
-import type { PullRequest, Density, PRDetails } from "../lib/types"
+import { PreviewPanel } from "../components/preview-panel"
+import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData } from "../lib/types"
 
 interface LsCommandProps {
   author?: string
@@ -26,7 +27,7 @@ const SORT_LABELS: Record<SortMode, string> = {
 
 export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandProps) {
   const renderer = useRenderer()
-  const { height: termHeight } = useTerminalDimensions()
+  const { height: termHeight, width: termWidth } = useTerminalDimensions()
   const [allPRs, setAllPRs] = useState<PullRequest[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -41,6 +42,12 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [flash, setFlash] = useState<string | null>(null)
   const [density, setDensity] = useState<Density>("compact")
   const [detailsMap, setDetailsMap] = useState<Map<string, PRDetails>>(new Map())
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelTab, setPanelTab] = useState<PanelTab>("body")
+  const [panelScroll, setPanelScroll] = useState(0)
+  const [splitRatio, setSplitRatio] = useState(0.6)
+  const [panelData, setPanelData] = useState<PRPanelData | null>(null)
+  const [panelLoading, setPanelLoading] = useState(false)
   const cacheRef = useRef(new PRCache())
 
   // Detect current repo on mount
@@ -164,6 +171,44 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
 
   const selectedPR = filteredPRs[selectedIndex] ?? null
 
+  // Panel data fetching
+  useEffect(() => {
+    if (!panelOpen || !selectedPR) return
+
+    const cache = cacheRef.current
+    const cached = cache.getPanelData(selectedPR.url)
+    if (cached) {
+      setPanelData(cached)
+      setPanelLoading(false)
+      return
+    }
+
+    setPanelLoading(true)
+    setPanelData(null)
+    fetchPRPanelData(selectedPR.repo, selectedPR.number)
+      .then((data) => {
+        cache.setPanelData(selectedPR.url, data)
+        setPanelData(data)
+      })
+      .catch(() => setPanelData(null))
+      .finally(() => setPanelLoading(false))
+  }, [panelOpen, selectedPR?.url])
+
+  // Prefetch neighbors
+  useEffect(() => {
+    if (!panelOpen) return
+    const cache = cacheRef.current
+
+    const neighbors = [filteredPRs[selectedIndex - 1], filteredPRs[selectedIndex + 1]].filter(Boolean)
+    for (const pr of neighbors) {
+      if (!cache.hasPanelData(pr.url)) {
+        fetchPRPanelData(pr.repo, pr.number)
+          .then((data) => cache.setPanelData(pr.url, data))
+          .catch(() => {})
+      }
+    }
+  }, [panelOpen, selectedIndex, filteredPRs])
+
   // Compute visible window: reserve 7 lines for header/tabs/repo/search/detail/keybinds
   const rowHeight = density === "detailed" ? 2 : 1
   const listHeight = Math.max(3, Math.floor((termHeight - 9) / rowHeight))
@@ -204,6 +249,51 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       return
     }
 
+    if (panelOpen) {
+      // Panel open mode
+      if (key.name === "j") {
+        setPanelScroll((s) => s + 1)
+      } else if (key.name === "k") {
+        setPanelScroll((s) => Math.max(0, s - 1))
+      } else if (key.name === "down") {
+        setSelectedIndex((i) => Math.min(filteredPRs.length - 1, i + 1))
+        setPanelScroll(0)
+      } else if (key.name === "up") {
+        setSelectedIndex((i) => Math.max(0, i - 1))
+        setPanelScroll(0)
+      } else if (key.name === "1") {
+        setPanelTab("body"); setPanelScroll(0)
+      } else if (key.name === "2") {
+        setPanelTab("comments"); setPanelScroll(0)
+      } else if (key.name === "3") {
+        setPanelTab("code"); setPanelScroll(0)
+      } else if (key.name === "tab") {
+        setPanelTab((t) => {
+          if (t === "body") return "comments"
+          if (t === "comments") return "code"
+          return "body"
+        })
+        setPanelScroll(0)
+      } else if (key.name === "+" || key.name === "=") {
+        setSplitRatio((r) => Math.min(0.8, r + 0.1))
+      } else if (key.name === "-") {
+        setSplitRatio((r) => Math.max(0.3, r - 0.1))
+      } else if (key.name === "p" || key.name === "escape") {
+        setPanelOpen(false)
+      } else if (key.name === "enter" || key.name === "return") {
+        if (selectedPR) {
+          Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
+          showFlash("Opening " + selectedPR.url)
+        }
+      } else if (key.name === "c" && selectedPR) {
+        renderer.copyToClipboardOSC52(selectedPR.url)
+        showFlash("Copied URL!")
+      } else if (key.name === "q") {
+        renderer.destroy()
+      }
+      return
+    }
+
     // Normal mode
     if (key.name === "q" || key.name === "escape") {
       if (searchQuery) { setSearchQuery(""); return }
@@ -215,10 +305,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       setSelectedIndex((i) => Math.max(0, i - 1))
     } else if (key.name === "enter" || key.name === "return") {
       if (selectedPR) {
-        Bun.spawn(["open", selectedPR.url], {
-          stdout: "ignore",
-          stderr: "ignore",
-        })
+        Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
         showFlash("Opening " + selectedPR.url)
       }
     } else if (key.name === "c" && selectedPR) {
@@ -241,7 +328,6 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       })
       setSelectedIndex(0)
     } else if (key.name === "r") {
-      // Cycle repo filter: null -> repo1 -> repo2 -> ... -> null
       if (repoFilter === null) {
         if (repos.length > 0) setRepoFilter(repos[0])
       } else {
@@ -259,6 +345,10 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         if (d === "normal") return "detailed"
         return "compact"
       })
+    } else if (key.name === "p") {
+      setPanelOpen(true)
+      setPanelScroll(0)
+      setPanelTab("body")
     }
   })
 
@@ -340,23 +430,51 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         </box>
       )}
 
-      {/* PR List - manual windowing, no scrollbox */}
-      <box flexDirection="column" flexGrow={1} overflow="hidden">
-        <PRTable
-          prs={visiblePRs}
-          selectedIndex={visibleSelectedIndex}
-          density={density}
-          detailsMap={detailsMap}
-          onSelect={handleSelect}
-        />
-        {filteredPRs.length > listHeight && (
-          <box paddingX={1} height={1}>
-            <text fg="#6b7089">
-              {scrollOffset + 1}-{Math.min(scrollOffset + listHeight, filteredPRs.length)} of {filteredPRs.length}
-            </text>
+      {/* Main content area */}
+      {panelOpen ? (
+        <box flexDirection="row" flexGrow={1} overflow="hidden">
+          {/* Compressed PR list */}
+          <box flexDirection="column" width={Math.floor(termWidth * (1 - splitRatio))}>
+            <box flexDirection="column" flexGrow={1} overflow="hidden">
+              <PRTable
+                prs={visiblePRs}
+                selectedIndex={visibleSelectedIndex}
+                density="compressed"
+                onSelect={handleSelect}
+              />
+            </box>
           </box>
-        )}
-      </box>
+          {/* Preview panel */}
+          {selectedPR && (
+            <PreviewPanel
+              pr={selectedPR}
+              panelData={panelData}
+              loading={panelLoading}
+              tab={panelTab}
+              scrollOffset={panelScroll}
+              width={Math.floor(termWidth * splitRatio)}
+              height={termHeight - 6}
+            />
+          )}
+        </box>
+      ) : (
+        <box flexDirection="column" flexGrow={1} overflow="hidden">
+          <PRTable
+            prs={visiblePRs}
+            selectedIndex={visibleSelectedIndex}
+            density={density}
+            detailsMap={detailsMap}
+            onSelect={handleSelect}
+          />
+          {filteredPRs.length > listHeight && (
+            <box paddingX={1} height={1}>
+              <text fg="#6b7089">
+                {scrollOffset + 1}-{Math.min(scrollOffset + listHeight, filteredPRs.length)} of {filteredPRs.length}
+              </text>
+            </box>
+          )}
+        </box>
+      )}
 
       {/* Detail panel */}
       <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>
@@ -384,9 +502,13 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         <box flexDirection="row" height={1}>
           {flash ? (
             <text fg="#9ece6a">{flash}</text>
+          ) : panelOpen ? (
+            <text fg="#6b7089">
+              j/k: scroll  1-3: tab  +/-: resize  p: close  Enter: open  c: copy  q: quit
+            </text>
           ) : (
             <text fg="#6b7089">
-              Enter: open  c: copy  /: search  r: repo  s: sort  v: view  Tab: status  q: quit
+              Enter: open  c: copy  /: search  r: repo  s: sort  v: view  p: preview  Tab: status  q: quit
             </text>
           )}
         </box>
