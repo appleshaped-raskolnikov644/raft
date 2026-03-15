@@ -274,9 +274,9 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           return "body"
         })
         setPanelScroll(0)
-      } else if (key.name === "+" || key.name === "=") {
+      } else if (key.name === "+" || key.name === "=" || key.sequence === "+") {
         setSplitRatio((r) => Math.min(0.8, r + 0.1))
-      } else if (key.name === "-") {
+      } else if (key.name === "-" || key.name === "_" || key.sequence === "-") {
         setSplitRatio((r) => Math.max(0.3, r - 0.1))
       } else if (key.name === "p" || key.name === "escape") {
         setPanelOpen(false)
