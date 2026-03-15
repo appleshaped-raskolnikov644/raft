@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react"
-import { useKeyboard, useRenderer } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { fetchOpenPRs } from "../lib/github"
 import type { PullRequest } from "../lib/types"
@@ -10,15 +9,8 @@ interface LsCommandProps {
 }
 
 export function LsCommand({ author, repoFilter }: LsCommandProps) {
-  const renderer = useRenderer()
   const [prs, setPRs] = useState<PullRequest[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  useKeyboard((key) => {
-    if (key.name === "q" || key.name === "escape") {
-      renderer.destroy()
-    }
-  })
 
   useEffect(() => {
     async function load() {

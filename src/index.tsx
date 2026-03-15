@@ -80,7 +80,14 @@ function HelpScreen() {
 const config = parseArgs(process.argv)
 
 const renderer = await createCliRenderer({
-  exitOnCtrlC: true,
+  exitOnCtrlC: false,
+})
+
+// Global quit: q, Escape, or Ctrl+C exits from any screen
+renderer.keyInput.on("keypress", (key) => {
+  if (key.name === "q" || key.name === "escape" || (key.ctrl && key.name === "c")) {
+    renderer.destroy()
+  }
 })
 
 const root = createRoot(renderer)
