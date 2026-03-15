@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test"
-import { formatRelativeAge, shortRepoName, truncate } from "../format"
+import { formatRelativeAge, shortRepoName, truncate, formatReviewStatus, formatLinesChanged } from "../format"
+import type { Review } from "../types"
 
 describe("formatRelativeAge", () => {
   test("returns 'now' for just now", () => {
@@ -55,5 +56,58 @@ describe("truncate", () => {
 
   test("handles exact length", () => {
     expect(truncate("exact", 5)).toBe("exact")
+  })
+})
+
+describe("formatReviewStatus", () => {
+  test("returns empty string for no reviews", () => {
+    expect(formatReviewStatus([])).toBe("")
+  })
+
+  test("shows approved count", () => {
+    const reviews: Review[] = [
+      { user: "alice", state: "APPROVED" },
+      { user: "bob", state: "APPROVED" },
+    ]
+    expect(formatReviewStatus(reviews)).toContain("2")
+  })
+
+  test("shows changes requested count", () => {
+    const reviews: Review[] = [
+      { user: "alice", state: "CHANGES_REQUESTED" },
+    ]
+    expect(formatReviewStatus(reviews)).toContain("1")
+  })
+
+  test("deduplicates by user (latest state wins)", () => {
+    const reviews: Review[] = [
+      { user: "alice", state: "CHANGES_REQUESTED" },
+      { user: "alice", state: "APPROVED" },
+    ]
+    const result = formatReviewStatus(reviews)
+    expect(result).toContain("1")
+    expect(result).not.toContain("x")
+  })
+
+  test("ignores COMMENTED and PENDING states in count", () => {
+    const reviews: Review[] = [
+      { user: "alice", state: "COMMENTED" },
+      { user: "bob", state: "PENDING" },
+    ]
+    expect(formatReviewStatus(reviews)).toBe("")
+  })
+})
+
+describe("formatLinesChanged", () => {
+  test("formats additions and deletions", () => {
+    expect(formatLinesChanged(142, 38)).toBe("+142 -38")
+  })
+
+  test("handles zero additions", () => {
+    expect(formatLinesChanged(0, 10)).toBe("+0 -10")
+  })
+
+  test("handles zero deletions", () => {
+    expect(formatLinesChanged(50, 0)).toBe("+50 -0")
   })
 })
