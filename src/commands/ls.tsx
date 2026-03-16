@@ -285,10 +285,13 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         setPanelTab("comments"); setPanelScroll(0)
       } else if (key.name === "3") {
         setPanelTab("code"); setPanelScroll(0)
+      } else if (key.name === "4") {
+        setPanelTab("files"); setPanelScroll(0)
       } else if (key.name === "tab") {
         setPanelTab((t) => {
           if (t === "body") return "comments"
           if (t === "comments") return "code"
+          if (t === "code") return "files"
           return "body"
         })
         setPanelScroll(0)
@@ -551,7 +554,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
             <text fg="#9ece6a">{flash}</text>
           ) : panelOpen ? (
             <text fg="#6b7089">
-              j/k: scroll  1-3: tab  +/-: resize  p: close  Enter: open  c: copy  q: quit
+              j/k: scroll  1-4: tab  +/-: resize  p: close  Enter: open  c: copy  q: quit
             </text>
           ) : (
             <text fg="#6b7089">

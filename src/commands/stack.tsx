@@ -152,10 +152,14 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
       } else if (key.name === "3") {
         setPanelTab("code")
         setPanelScroll(0)
+      } else if (key.name === "4") {
+        setPanelTab("files")
+        setPanelScroll(0)
       } else if (key.name === "tab") {
         setPanelTab((t) => {
           if (t === "body") return "comments"
           if (t === "comments") return "code"
+          if (t === "code") return "files"
           return "body"
         })
         setPanelScroll(0)

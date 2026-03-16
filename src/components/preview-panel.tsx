@@ -5,6 +5,7 @@ import { Spinner } from "./spinner"
 import { PanelBody } from "./panel-body"
 import { PanelComments } from "./panel-comments"
 import { PanelCode } from "./panel-code"
+import { PanelFiles } from "./panel-files"
 
 interface PreviewPanelProps {
   pr: PullRequest
@@ -20,6 +21,7 @@ interface PreviewPanelProps {
 export function PreviewPanel({ pr, panelData, loading, tab, scrollOffset, width, height, onContentHeight }: PreviewPanelProps) {
   const commentCount = panelData?.comments.length ?? 0
   const codeCount = panelData?.codeComments.length ?? 0
+  const fileCount = panelData?.files.length ?? 0
   // 4 lines reserved: title, subtitle, divider, tab bar
   const contentHeight = Math.max(1, height - 4)
 
@@ -61,9 +63,14 @@ export function PreviewPanel({ pr, panelData, loading, tab, scrollOffset, width,
             {tab === "comments" ? <u>Comments ({commentCount})</u> : `Comments (${commentCount})`}
           </text>
         </box>
-        <box>
+        <box marginRight={2}>
           <text fg={tab === "code" ? "#7aa2f7" : "#6b7089"}>
             {tab === "code" ? <u>Code ({codeCount})</u> : `Code (${codeCount})`}
+          </text>
+        </box>
+        <box>
+          <text fg={tab === "files" ? "#7aa2f7" : "#6b7089"}>
+            {tab === "files" ? <u>Files ({fileCount})</u> : `Files (${fileCount})`}
           </text>
         </box>
       </box>
@@ -90,6 +97,9 @@ export function PreviewPanel({ pr, panelData, loading, tab, scrollOffset, width,
               )}
               {tab === "code" && (
                 <PanelCode codeComments={panelData.codeComments} width={width - 4} scrollOffset={scrollOffset} maxLines={contentHeight} onContentHeight={handleContentHeight} />
+              )}
+              {tab === "files" && (
+                <PanelFiles files={panelData.files} width={width - 4} scrollOffset={scrollOffset} maxLines={contentHeight} onContentHeight={handleContentHeight} />
               )}
             </>
           ) : (

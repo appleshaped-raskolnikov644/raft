@@ -1,4 +1,4 @@
-import type { PullRequest, PRDetails, Review, PRPanelData, Comment, CodeComment } from "./types"
+import type { PullRequest, PRDetails, Review, PRPanelData, Comment, CodeComment, FileDiff } from "./types"
 import { STACK_COMMENT_MARKER } from "./types"
 
 interface RawSearchResult {
@@ -346,7 +346,7 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
 /** Fetch full PR data for the preview panel: body, conversation comments, code comments. */
 export async function fetchPRPanelData(repo: string, prNumber: number): Promise<PRPanelData> {
   return tryMultiAccountFetch(async () => {
-    const [bodyJson, issueCommentsJson, codeCommentsJson] = await Promise.all([
+    const [bodyJson, issueCommentsJson, codeCommentsJson, filesJson] = await Promise.all([
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}`,
         "--jq", ".body",
@@ -359,12 +359,17 @@ export async function fetchPRPanelData(repo: string, prNumber: number): Promise<
         "api", `repos/${repo}/pulls/${prNumber}/comments`,
         "--jq", "[.[] | {author: .user.login, body: .body, path: .path, line: (.line // .original_line // 0), diffHunk: .diff_hunk, createdAt: .created_at}]",
       ]),
+      runGh([
+        "api", `repos/${repo}/pulls/${prNumber}/files`,
+        "--jq", "[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions, changes: .changes, patch: .patch, previousFilename: .previous_filename}]",
+      ]),
     ])
 
     const body = bodyJson || ""
     const comments: Comment[] = JSON.parse(issueCommentsJson || "[]")
     const codeComments: CodeComment[] = JSON.parse(codeCommentsJson || "[]")
+    const files: FileDiff[] = JSON.parse(filesJson || "[]")
 
-    return { body, comments, codeComments }
+    return { body, comments, codeComments, files }
   })
 }

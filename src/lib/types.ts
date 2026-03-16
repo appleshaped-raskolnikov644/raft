@@ -53,11 +53,22 @@ export interface CodeComment {
   createdAt: string
 }
 
+export interface FileDiff {
+  filename: string
+  status: "added" | "removed" | "modified" | "renamed"
+  additions: number
+  deletions: number
+  changes: number
+  patch: string
+  previousFilename?: string
+}
+
 export interface PRPanelData {
   body: string
   comments: Comment[]
   codeComments: CodeComment[]
+  files: FileDiff[]
 }
 
 export type Density = "compact" | "normal" | "detailed" | "compressed"
-export type PanelTab = "body" | "comments" | "code"
+export type PanelTab = "body" | "comments" | "code" | "files"
