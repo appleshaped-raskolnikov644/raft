@@ -3,7 +3,7 @@
 # Suppresses output on success to avoid triggering response loops.
 # Only surfaces errors so Claude can fix them.
 
-cd '/Volumes/Crucial X10/Projects/raft'
+cd "${CLAUDE_PROJECT_DIR:-.}"
 
 # Run typecheck
 TSC_OUTPUT=$(bunx tsc --noEmit 2>&1)
