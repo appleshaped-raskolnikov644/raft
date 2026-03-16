@@ -1,8 +1,33 @@
 import type { FileDiff } from "./types"
 
 /**
- * Generates a semantic explanation of file changes using Claude Code headlessly.
- * Returns a 1-2 sentence summary of what changed and why.
+ * Builds a clean environment for spawning Claude Code subprocesses.
+ *
+ * Strips GITHUB_TOKEN and GH_TOKEN from the inherited environment so that
+ * Claude Code (and any `gh` calls it may make internally) uses its own
+ * keyring auth rather than tokens that Bun auto-loads from `.env`.
+ *
+ * @returns A copy of `process.env` without GitHub token variables.
+ */
+function buildCleanEnv(): Record<string, string | undefined> {
+  const cleanEnv = { ...process.env }
+  delete cleanEnv.GITHUB_TOKEN
+  delete cleanEnv.GH_TOKEN
+  return cleanEnv
+}
+
+/**
+ * Generates a semantic explanation of a single file's changes using
+ * Claude Code in pipe mode (`-p`) with the `haiku` model.
+ *
+ * The function constructs a prompt containing the filename, status,
+ * change stats, and full patch, then asks Claude for a 1-2 sentence
+ * business-logic summary.
+ *
+ * @param file - The file diff to explain, including its patch content.
+ * @returns A short natural-language explanation, or a fallback message
+ *          if the file has no patch, the subprocess fails, or an error
+ *          is thrown.
  */
 export async function explainFileDiff(file: FileDiff): Promise<string> {
   if (!file.patch) {
@@ -21,10 +46,10 @@ ${file.patch}
 Explanation:`
 
   try {
-    const proc = Bun.spawn(["claude", "--no-input", prompt], {
+    const proc = Bun.spawn(["claude", "-p", "--model", "haiku", prompt], {
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env },
+      env: buildCleanEnv(),
     })
 
     const stdout = await new Response(proc.stdout).text()
@@ -44,8 +69,14 @@ Explanation:`
 }
 
 /**
- * Generates explanations for multiple files in parallel.
- * Returns a map of filename to explanation.
+ * Generates AI explanations for multiple file diffs in parallel batches.
+ *
+ * Files are processed in batches of 3 to avoid overwhelming the system
+ * with too many concurrent Claude Code subprocesses.
+ *
+ * @param files - Array of file diffs to generate explanations for.
+ * @returns A `Map` keyed by filename, where each value is the generated
+ *          explanation string for that file.
  */
 export async function explainAllDiffs(files: FileDiff[]): Promise<Map<string, string>> {
   const results = new Map<string, string>()

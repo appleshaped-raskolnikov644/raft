@@ -1,5 +1,6 @@
 import React from "react"
 
+/** A single parsed line from a markdown document. */
 export type MdLine =
   | { type: "header"; text: string; level: number }
   | { type: "list"; text: string }
@@ -7,6 +8,76 @@ export type MdLine =
   | { type: "text"; text: string }
   | { type: "blank" }
 
+/** A segment of inline-formatted text within a line. */
+export type InlineSegment =
+  | { kind: "text"; text: string }
+  | { kind: "bold"; text: string }
+  | { kind: "code"; text: string }
+
+/** Parses inline markdown formatting (bold and inline code) within a single line of text. */
+export function parseInlineSegments(text: string): InlineSegment[] {
+  const segments: InlineSegment[] = []
+  // Match **bold** or `code` spans
+  const pattern = /(\*\*(.+?)\*\*|`([^`]+)`)/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(text)) !== null) {
+    // Push any plain text before this match
+    if (match.index > lastIndex) {
+      segments.push({ kind: "text", text: text.slice(lastIndex, match.index) })
+    }
+
+    if (match[2] !== undefined) {
+      // **bold**
+      segments.push({ kind: "bold", text: match[2] })
+    } else if (match[3] !== undefined) {
+      // `code`
+      segments.push({ kind: "code", text: match[3] })
+    }
+
+    lastIndex = match.index + match[0].length
+  }
+
+  // Push any remaining plain text
+  if (lastIndex < text.length) {
+    segments.push({ kind: "text", text: text.slice(lastIndex) })
+  }
+
+  // If nothing matched, return the whole thing as text
+  if (segments.length === 0) {
+    segments.push({ kind: "text", text })
+  }
+
+  return segments
+}
+
+/** Renders inline markdown segments as React elements with appropriate formatting. */
+function renderInlineText(text: string, baseColor: string = "#c0caf5"): React.ReactNode {
+  const segments = parseInlineSegments(text)
+
+  // Fast path: single plain-text segment with no formatting
+  if (segments.length === 1 && segments[0].kind === "text") {
+    return <span fg={baseColor}>{segments[0].text}</span>
+  }
+
+  return (
+    <>
+      {segments.map((seg, i) => {
+        switch (seg.kind) {
+          case "bold":
+            return <span key={i} fg={baseColor}><strong>{seg.text}</strong></span>
+          case "code":
+            return <span key={i} fg="#9aa5ce" bg="#1a1b26">{seg.text}</span>
+          case "text":
+            return <span key={i} fg={baseColor}>{seg.text}</span>
+        }
+      })}
+    </>
+  )
+}
+
+/** Parses a markdown string into an array of block-level line descriptors. */
 export function parseMarkdownLines(input: string): MdLine[] {
   const rawLines = input.split("\n")
   const result: MdLine[] = []
@@ -47,6 +118,12 @@ export function parseMarkdownLines(input: string): MdLine[] {
       continue
     }
 
+    const numberedMatch = line.match(/^\d+\.\s+(.+)/)
+    if (numberedMatch) {
+      result.push({ type: "list", text: numberedMatch[1] })
+      continue
+    }
+
     result.push({ type: "text", text: line })
   }
 
@@ -58,6 +135,7 @@ export function parseMarkdownLines(input: string): MdLine[] {
   return result
 }
 
+/** Props for the MarkdownView component. */
 interface MarkdownViewProps {
   content: string
   width: number
@@ -66,6 +144,7 @@ interface MarkdownViewProps {
   onContentHeight?: (height: number) => void
 }
 
+/** Renders a markdown string as a scrollable terminal UI with block and inline formatting. */
 export function MarkdownView({ content, width, scrollOffset, maxLines, onContentHeight }: MarkdownViewProps) {
   const lines = parseMarkdownLines(content)
 
@@ -81,7 +160,7 @@ export function MarkdownView({ content, width, scrollOffset, maxLines, onContent
           key,
           element: (
             <box height={1} paddingX={1}>
-              <text fg="#c0caf5"><strong>{line.text}</strong></text>
+              <text><strong>{renderInlineText(line.text)}</strong></text>
             </box>
           ),
         })
@@ -93,7 +172,7 @@ export function MarkdownView({ content, width, scrollOffset, maxLines, onContent
             <box height={1} paddingX={1}>
               <text>
                 <span fg="#6b7089">  - </span>
-                <span fg="#c0caf5">{line.text}</span>
+                {renderInlineText(line.text)}
               </text>
             </box>
           ),
@@ -123,7 +202,7 @@ export function MarkdownView({ content, width, scrollOffset, maxLines, onContent
           key,
           element: (
             <box height={1} paddingX={1}>
-              <text fg="#c0caf5">{line.text}</text>
+              <text>{renderInlineText(line.text)}</text>
             </box>
           ),
         })

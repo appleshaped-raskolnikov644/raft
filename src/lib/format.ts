@@ -1,5 +1,6 @@
 import type { Review } from "./types"
 
+/** Converts an ISO date string to a compact relative age label (e.g. "3d", "2w"). */
 export function formatRelativeAge(dateStr: string): string {
   const now = Date.now()
   const then = new Date(dateStr).getTime()
@@ -18,11 +19,13 @@ export function formatRelativeAge(dateStr: string): string {
   return `${diffMonths}mo`
 }
 
+/** Extracts the repo name from a full `owner/repo` string. */
 export function shortRepoName(fullRepo: string): string {
   const parts = fullRepo.split("/")
   return parts.length > 1 ? parts[1] : fullRepo
 }
 
+/** Truncates a string to `max` characters, appending an ellipsis if needed. */
 export function truncate(str: string, max: number): string {
   if (str.length <= max) return str
   return str.slice(0, max - 1) + "\u2026"
@@ -57,6 +60,7 @@ export function formatReviewStatus(reviews: Review[]): string {
   return parts.join(" ")
 }
 
+/** Formats additions and deletions as a compact `+N -N` string. */
 export function formatLinesChanged(additions: number, deletions: number): string {
   return `+${additions} -${deletions}`
 }
