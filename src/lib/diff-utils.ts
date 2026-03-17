@@ -140,3 +140,70 @@ export function getViewMode(
 
   return cols >= splitThreshold ? "split" : "unified"
 }
+
+/** Placeholder marker for collapsed diff regions. */
+export const COLLAPSE_MARKER = "@@COLLAPSED@@"
+
+/**
+ * Collapse unchanged context regions in a unified diff.
+ *
+ * Identifies runs of context lines (those starting with " ") that
+ * exceed the context threshold and replaces them with a collapse
+ * marker showing how many lines were hidden. This makes large diffs
+ * scannable by showing only changes + minimal surrounding context.
+ *
+ * @param patch - The unified diff patch string.
+ * @param contextLines - Number of context lines to keep around each change (default 3).
+ * @returns Object with collapsed patch and array of collapsed region info.
+ */
+export function collapseDiffRegions(
+  patch: string,
+  contextLines: number = 3,
+): { collapsed: string; hiddenRegions: Array<{ startLine: number; count: number }> } {
+  const lines = patch.split("\n")
+  const result: string[] = []
+  const hiddenRegions: Array<{ startLine: number; count: number }> = []
+
+  let contextRun: string[] = []
+  let contextStartLine = 0
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+
+    // Hunk headers and change lines break context runs
+    if (line.startsWith("@@") || line.startsWith("+") || line.startsWith("-")) {
+      // Flush any accumulated context
+      if (contextRun.length > contextLines * 2 + 1) {
+        // Keep first N context lines, collapse middle, keep last N
+        const kept = contextLines
+        for (let j = 0; j < kept; j++) result.push(contextRun[j])
+        const hidden = contextRun.length - kept * 2
+        hiddenRegions.push({ startLine: contextStartLine + kept, count: hidden })
+        result.push(`${COLLAPSE_MARKER} ${hidden} lines hidden`)
+        for (let j = contextRun.length - kept; j < contextRun.length; j++) result.push(contextRun[j])
+      } else {
+        // Context run is short enough, keep all
+        result.push(...contextRun)
+      }
+      contextRun = []
+      result.push(line)
+    } else {
+      // Context line (starts with " " or is empty in the diff)
+      if (contextRun.length === 0) contextStartLine = i
+      contextRun.push(line)
+    }
+  }
+
+  // Flush trailing context
+  if (contextRun.length > contextLines + 1) {
+    const kept = contextLines
+    for (let j = 0; j < kept; j++) result.push(contextRun[j])
+    const hidden = contextRun.length - kept
+    hiddenRegions.push({ startLine: contextStartLine + kept, count: hidden })
+    result.push(`${COLLAPSE_MARKER} ${hidden} lines hidden`)
+  } else {
+    result.push(...contextRun)
+  }
+
+  return { collapsed: result.join("\n"), hiddenRegions }
+}
