@@ -67,6 +67,10 @@ export interface CodeComment {
   line: number
   diffHunk: string
   createdAt: string
+  /** GraphQL thread ID for resolving this thread. Populated when thread data is available. */
+  threadId?: string
+  /** Whether this comment's thread has been resolved. */
+  isResolved?: boolean
 }
 
 /** A single file's diff within a pull request. */

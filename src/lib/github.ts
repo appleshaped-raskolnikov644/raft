@@ -458,3 +458,126 @@ export async function postPRComment(
     ])
   })
 }
+
+/** A review thread with resolution status and associated comments. */
+export interface ReviewThread {
+  id: string
+  isResolved: boolean
+  comments: Array<{
+    author: string
+    body: string
+    path: string
+    line: number | null
+    createdAt: string
+  }>
+}
+
+/**
+ * Fetch review threads with resolution status via GraphQL.
+ *
+ * Uses the pullRequest.reviewThreads connection to get thread-level
+ * resolution state, which isn't available from the REST API.
+ *
+ * @param repo - Full repository name in owner/repo format.
+ * @param prNumber - The pull request number.
+ * @returns Array of review threads with their resolution status.
+ */
+export async function fetchReviewThreads(repo: string, prNumber: number): Promise<ReviewThread[]> {
+  const [owner, name] = repo.split("/")
+  const query = `query {
+    repository(owner: "${owner}", name: "${name}") {
+      pullRequest(number: ${prNumber}) {
+        reviewThreads(first: 100) {
+          nodes {
+            id
+            isResolved
+            comments(first: 10) {
+              nodes {
+                author { login }
+                body
+                path
+                line
+                createdAt
+              }
+            }
+          }
+        }
+      }
+    }
+  }`
+
+  return tryMultiAccountFetch(async () => {
+    const result = await runGh(["api", "graphql", "-f", `query=${query}`])
+    const data = JSON.parse(result)
+    const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []
+    return threads.map((t: any) => ({
+      id: t.id,
+      isResolved: t.isResolved,
+      comments: (t.comments?.nodes ?? []).map((c: any) => ({
+        author: c.author?.login ?? "unknown",
+        body: c.body,
+        path: c.path,
+        line: c.line,
+        createdAt: c.createdAt,
+      })),
+    }))
+  })
+}
+
+/**
+ * Resolve a review thread via GraphQL mutation.
+ *
+ * @param threadId - The GraphQL node ID of the review thread to resolve.
+ */
+export async function resolveReviewThread(threadId: string): Promise<void> {
+  const query = `mutation {
+    resolveReviewThread(input: { threadId: "${threadId}" }) {
+      thread { id isResolved }
+    }
+  }`
+
+  return tryMultiAccountFetch(async () => {
+    await runGh(["api", "graphql", "-f", `query=${query}`])
+  })
+}
+
+/**
+ * Fetch CI check status for a PR's head commit.
+ *
+ * @param repo - Full repository name in owner/repo format.
+ * @param ref - Git ref (branch name or SHA) to check.
+ * @returns "ready" if all pass, "pending" if running, "failing" if any failed.
+ */
+export async function fetchCIStatus(repo: string, ref: string): Promise<"ready" | "pending" | "failing"> {
+  try {
+    const result = await tryMultiAccountFetch(async () => {
+      return runGh(["api", `repos/${repo}/commits/${ref}/check-runs`, "--jq", ".check_runs"])
+    })
+    const checks = JSON.parse(result) as Array<{ status: string; conclusion: string | null }>
+    if (checks.length === 0) return "ready"
+    if (checks.some(c => c.conclusion === "failure" || c.conclusion === "timed_out")) return "failing"
+    if (checks.some(c => c.status !== "completed")) return "pending"
+    return "ready"
+  } catch {
+    return "ready" // Can't determine, assume ok
+  }
+}
+
+/**
+ * Check if a PR has merge conflicts.
+ *
+ * @param repo - Full repository name in owner/repo format.
+ * @param prNumber - The pull request number.
+ * @returns true if the PR has merge conflicts.
+ */
+export async function fetchHasConflicts(repo: string, prNumber: number): Promise<boolean> {
+  try {
+    const result = await tryMultiAccountFetch(async () => {
+      return runGh(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeable,mergeStateStatus"])
+    })
+    const data = JSON.parse(result) as { mergeable: string; mergeStateStatus: string }
+    return data.mergeable === "CONFLICTING" || data.mergeStateStatus === "DIRTY"
+  } catch {
+    return false
+  }
+}
