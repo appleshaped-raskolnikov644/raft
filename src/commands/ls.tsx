@@ -3,11 +3,13 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
+import { StatusView } from "../components/status-view"
 import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, submitPRReview, postPRComment, replyToReviewComment } from "../lib/github"
 import { shortRepoName } from "../lib/format"
 import { PreviewPanel } from "../components/preview-panel"
 import { usePanel } from "../hooks/usePanel"
-import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData } from "../lib/types"
+import { detectPRState, compareByUrgency } from "../lib/pr-lifecycle"
+import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData, PRLifecycleInfo } from "../lib/types"
 import { groupByRepo, groupByStack, groupByRepoAndStack, type GroupMode, type GroupedData } from "../lib/grouping"
 
 interface LsCommandProps {
@@ -16,9 +18,10 @@ interface LsCommandProps {
 }
 
 type StatusFilter = "all" | "open" | "draft"
-type SortMode = "repo" | "number" | "title" | "age" | "status"
-const SORT_MODES: SortMode[] = ["repo", "number", "title", "age", "status"]
+type SortMode = "attention" | "repo" | "number" | "title" | "age" | "status"
+const SORT_MODES: SortMode[] = ["attention", "repo", "number", "title", "age", "status"]
 const SORT_LABELS: Record<SortMode, string> = {
+  attention: "Attention",
   repo: "Repo",
   number: "#",
   title: "Title",
@@ -38,7 +41,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [searchQuery, setSearchQuery] = useState("")
   const [repoFilter, setRepoFilter] = useState<string | null>(initialRepoFilter ?? null)
   const [currentRepo, setCurrentRepo] = useState<string | null>(null)
-  const [sortMode, setSortMode] = useState<SortMode>("repo")
+  const [sortMode, setSortMode] = useState<SortMode>("attention")
   const [loadingStatus, setLoadingStatus] = useState("Loading PRs...")
   const [flash, setFlash] = useState<string | null>(null)
   const [density, setDensity] = useState<Density>("compact")
@@ -120,6 +123,15 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     // Sort
     prs = [...prs].sort((a, b) => {
       switch (sortMode) {
+        case "attention": {
+          // Sort by lifecycle urgency score (computed below in lifecycleMap)
+          const aState = detailsMap.has(a.url) ? detectPRState(a, detailsMap.get(a.url)!) : detectPRState(a, null)
+          const bState = detailsMap.has(b.url) ? detectPRState(b, detailsMap.get(b.url)!) : detectPRState(b, null)
+          return compareByUrgency(
+            { urgency: aState.urgency, createdAt: a.createdAt },
+            { urgency: bState.urgency, createdAt: b.createdAt },
+          )
+        }
         case "repo": {
           const rc = a.repo.localeCompare(b.repo)
           return rc !== 0 ? rc : a.number - b.number
@@ -135,7 +147,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       }
     })
     return prs
-  }, [allPRs, repoFilter, authorFilter, statusFilter, searchQuery, sortMode])
+  }, [allPRs, repoFilter, authorFilter, statusFilter, searchQuery, sortMode, detailsMap])
 
   // Grouped data computation
   const groupedData = useMemo(() => {
@@ -157,8 +169,8 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     }
   }, [filteredPRs.length, selectedIndex])
 
+  // Always fetch details - needed for lifecycle state detection and attention sort
   useEffect(() => {
-    if (density === "compact" || density === "compressed") return
     if (filteredPRs.length === 0) return
 
     const cache = cacheRef.current
@@ -191,7 +203,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       }
       setDetailsMap(map)
     })
-  }, [density, filteredPRs])
+  }, [filteredPRs])
 
   const selectedPR = filteredPRs[selectedIndex] ?? null
 
@@ -199,6 +211,13 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const panel = usePanel(selectedPR, filteredPRs, selectedIndex)
   const { panelOpen, panelTab, splitRatio, panelFullscreen, panelData, panelLoading,
     setPanelOpen, setPanelTab, setSplitRatio, setPanelFullscreen, setPanelData, cacheRef } = panel
+
+  // Compute lifecycle state for the selected PR
+  const selectedLifecycle = useMemo<PRLifecycleInfo | null>(() => {
+    if (!selectedPR) return null
+    const details = detailsMap.get(selectedPR.url) ?? null
+    return detectPRState(selectedPR, details)
+  }, [selectedPR, detailsMap])
 
   // Compute visible window: reserve 7 lines for header/tabs/repo/search/detail/keybinds
   const rowHeight = density === "detailed" ? 2 : 1
@@ -608,50 +627,24 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         </box>
       )}
 
-      {/* Detail panel */}
-      <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>
-        {selectedPR ? (
-          <>
-            <box flexDirection="row" height={1}>
-              <text>
-                <span fg="#bb9af7">{selectedPR.repo}</span>
-                <span fg="#9aa5ce"> #</span>
-                <span fg="#7aa2f7">{selectedPR.number}</span>
-              </text>
-            </box>
-            <box height={1}>
-              <text fg="#c0caf5">{selectedPR.title}</text>
-            </box>
-            <box height={1}>
-              <text fg="#9aa5ce">{selectedPR.url}</text>
-            </box>
-          </>
-        ) : (
+      {/* Status diagnostic view - shows lifecycle state, review summary, prompted action */}
+      {selectedPR ? (
+        <StatusView
+          pr={selectedPR}
+          details={detailsMap.get(selectedPR.url) ?? null}
+          lifecycle={selectedLifecycle}
+          flash={flash}
+          replyMode={replyMode}
+          replyText={replyText}
+          panelOpen={panelOpen}
+        />
+      ) : (
+        <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>
           <box height={3}>
             <text fg="#9aa5ce">No PR selected</text>
           </box>
-        )}
-        <box flexDirection="row" height={1}>
-          {replyMode ? (
-            <text>
-              <span fg="#e0af68">reply: </span>
-              <span fg="#c0caf5">{replyText}</span>
-              <span fg="#7aa2f7">_</span>
-              <span fg="#6b7089"> (Enter: send, Esc: cancel)</span>
-            </text>
-          ) : flash ? (
-            <text fg="#9ece6a">{flash}</text>
-          ) : panelOpen ? (
-            <text fg="#6b7089">
-              1-4: tab  r: reply  e: explain  A: approve  X: req changes  f: fullscreen  +/-: resize  p: close  q: quit
-            </text>
-          ) : (
-            <text fg="#6b7089">
-              Enter: open  c: copy  /: search  a: author  r: repo  s: sort  v: view  g: group  p: preview  Tab: status  q: quit
-            </text>
-          )}
         </box>
-      </box>
+      )}
     </box>
   )
 }

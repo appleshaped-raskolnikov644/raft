@@ -97,3 +97,19 @@ export type Density = "compact" | "normal" | "detailed" | "compressed"
 
 /** Active tab in the preview panel. */
 export type PanelTab = "body" | "comments" | "code" | "files"
+
+/** Lifecycle state info attached to a PR for attention-based sorting. */
+export interface PRLifecycleInfo {
+  /** Current lifecycle state label. */
+  state: string
+  /** Urgency score for sorting (0-100, higher = more urgent). */
+  urgency: number
+  /** Short badge label for the PR list. */
+  label: string
+  /** Badge color (hex). */
+  color: string
+  /** Description of what action is needed next. */
+  action: string
+  /** Keybind hint for the prompted action. */
+  keybind: string
+}
