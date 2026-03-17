@@ -1,10 +1,11 @@
 ---
 # raft-96v8
 title: PR lifecycle state machine and workflow tracking
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-03-16T15:53:56Z
-updated_at: 2026-03-16T15:53:56Z
+updated_at: 2026-03-17T05:44:37Z
 parent: raft-65vd
 ---
 
@@ -39,3 +40,8 @@ Track each PR through its actual lifecycle states and surface what action is nee
 - BLOCKED: CI failing OR merge conflicts OR unresolved threads with changes requested
 
 This is the highest-value feature for raft because it eliminates the mental overhead of tracking PR states across repos.
+
+
+
+---
+**Completed:** src/lib/pr-lifecycle.ts implements 8-state machine (MERGE_NOW, FIX_REVIEW, FIX_CI, PING_REVIEWERS, WAITING, AI_REVIEW, DRAFT, BLOCKED). Includes inferLifecycleState(), attentionSort(), getActionHint(), urgencyLevel(). StatusView component renders badges. ls.tsx wired with m/F/P keybinds for lifecycle actions. Tests in pr-lifecycle.test.ts.

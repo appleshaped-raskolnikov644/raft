@@ -3,8 +3,9 @@
 title: File tree sidebar with viewed/unviewed tracking
 status: todo
 type: feature
+priority: normal
 created_at: 2026-03-16T15:52:11Z
-updated_at: 2026-03-16T15:52:11Z
+updated_at: 2026-03-17T05:45:15Z
 parent: raft-65vd
 ---
 
@@ -19,3 +20,8 @@ Requirements:
 - Consider syncing viewed state with GitHub API (bidirectional, like Lumen)
 
 Reference: Lumen's file sidebar with collapsible directories and viewed-state sync, Critique's DirectoryTreeView component
+
+
+
+---
+**Not started.** Depends on file splits (raft-r4fa) completing first. review-session.ts provides the viewed/unviewed tracking state that the file tree will consume.

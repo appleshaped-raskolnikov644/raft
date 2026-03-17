@@ -1,10 +1,11 @@
 ---
 # raft-gazn
 title: Interactive AI Q&A on code selections
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-03-16T15:51:58Z
-updated_at: 2026-03-16T15:51:58Z
+updated_at: 2026-03-17T05:44:55Z
 parent: raft-65vd
 ---
 
@@ -26,3 +27,8 @@ Implementation ideas:
 - Stream response back and display progressively
 
 This is the feature that makes raft genuinely better than GitHub's review UI. A reviewer can point at confusing code and get instant, context-aware explanations.
+
+
+
+---
+**Completed:** src/lib/ai-qa.ts implements askCodeQuestion() for interactive Q&A on diffs. Takes PR context (repo, number, diff, file) and a natural-language question, returns AI analysis. Uses Claude via Bun.spawn with structured prompts including full diff context.

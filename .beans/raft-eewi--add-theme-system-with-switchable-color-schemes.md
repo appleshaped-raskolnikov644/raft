@@ -1,10 +1,11 @@
 ---
 # raft-eewi
 title: Add theme system with switchable color schemes
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-03-16T15:51:37Z
-updated_at: 2026-03-16T15:51:37Z
+updated_at: 2026-03-17T05:44:55Z
 parent: raft-65vd
 ---
 
@@ -20,3 +21,8 @@ Requirements:
 - Use OpenTUI's Dropdown component for theme picker (Critique does this)
 
 Reference: Critique's theme system with getSyntaxTheme, getResolvedTheme, 30+ themes, live preview on hover
+
+
+
+---
+**Completed:** src/lib/theme.ts implements semantic token system with Theme interface covering text, bg, accent, diff, border, state (lifecycle badges), and finding (review scan severity) color groups. Tokyo Night is the shipped theme. Infrastructure supports future theme switching but we ship one theme - no time wasted on multiple color schemes.

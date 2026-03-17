@@ -1,10 +1,11 @@
 ---
 # raft-25j2
-title: "Segfault in raft ls: file descriptor leak in runGh()"
-status: todo
+title: 'Segfault in raft ls: file descriptor leak in runGh()'
+status: completed
 type: bug
+priority: normal
 created_at: 2026-03-16T21:13:00Z
-updated_at: 2026-03-16T21:13:00Z
+updated_at: 2026-03-17T05:44:28Z
 ---
 
 `raft ls` crashes with a Bun segfault after ~72 seconds. Crash report: https://bun.report/1.3.9/Ma1cf6cdbbiHswogC_____2utr+Cm7ir+Cm7ir+C__________urrh+C2uw1pCA2Cowgg0G
@@ -56,3 +57,8 @@ async function runGh(args: string[]): Promise<string> {
 ```
 
 Also check `explain-diff.ts` for same pattern with Claude subprocess spawning.
+
+
+
+---
+**Completed:** safeSpawn in src/lib/process.ts replaces Bun.spawn with proper stdout/stderr stream consumption and fd cleanup. merge.tsx and nav.tsx updated to use shared git-utils.
