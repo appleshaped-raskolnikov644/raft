@@ -3,6 +3,7 @@ import { useKeyboard, useRenderer } from "@opentui/react"
 import { fetchRepoPRs, getCurrentRepo } from "../lib/github"
 import { detectStacks } from "../lib/stack"
 import { Spinner } from "../components/spinner"
+import { runGhMerge, checkPRCIStatus } from "../lib/git-utils"
 import type { Stack, StackedPR } from "../lib/types"
 
 interface MergeCommandProps {
@@ -15,43 +16,6 @@ interface MergeState {
   pr: StackedPR
   status: MergeStatus
   error?: string
-}
-
-async function runGhMerge(repo: string, prNumber: number): Promise<void> {
-  const cleanEnv = { ...process.env }
-  delete cleanEnv.GITHUB_TOKEN
-  delete cleanEnv.GH_TOKEN
-  const proc = Bun.spawn(
-    ["gh", "pr", "merge", String(prNumber), "--repo", repo, "--squash", "--auto"],
-    { stdout: "pipe", stderr: "pipe", env: cleanEnv }
-  )
-  const stderr = await new Response(proc.stderr).text()
-  const code = await proc.exited
-  if (code !== 0) {
-    throw new Error(stderr.trim())
-  }
-}
-
-async function checkPRStatus(repo: string, prNumber: number): Promise<"ready" | "pending" | "failing"> {
-  const cleanEnv = { ...process.env }
-  delete cleanEnv.GITHUB_TOKEN
-  delete cleanEnv.GH_TOKEN
-  const proc = Bun.spawn(
-    ["gh", "pr", "checks", String(prNumber), "--repo", repo, "--json", "state"],
-    { stdout: "pipe", stderr: "pipe", env: cleanEnv }
-  )
-  const stdout = await new Response(proc.stdout).text()
-  const code = await proc.exited
-  if (code !== 0) return "ready" // No checks configured
-  try {
-    const checks = JSON.parse(stdout) as Array<{ state: string }>
-    if (checks.length === 0) return "ready"
-    if (checks.some((c) => c.state === "FAILURE" || c.state === "ERROR")) return "failing"
-    if (checks.some((c) => c.state === "PENDING" || c.state === "EXPECTED")) return "pending"
-    return "ready"
-  } catch {
-    return "ready"
-  }
 }
 
 function MergeRow({ state }: { state: MergeState }) {
@@ -131,7 +95,7 @@ export function MergeCommand({ repo }: MergeCommandProps) {
       state.status = "waiting-ci"
       setMergeStates([...states])
 
-      const ciStatus = await checkPRStatus(stack.repo, state.pr.number)
+      const ciStatus = await checkPRCIStatus(stack.repo, state.pr.number)
       if (ciStatus === "failing") {
         state.status = "failed"
         state.error = "CI checks failing"

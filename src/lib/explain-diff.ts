@@ -14,6 +14,7 @@
  */
 
 import type { FileDiff } from "./types"
+import { safeSpawn, buildCleanEnv } from "./process"
 
 /** Files that are noise for review purposes and should be skipped. */
 const SKIP_PATTERNS = [
@@ -29,21 +30,7 @@ const SKIP_PATTERNS = [
   ".snap",
 ]
 
-/**
- * Builds a clean environment for spawning Claude Code subprocesses.
- *
- * Strips GITHUB_TOKEN and GH_TOKEN from the inherited environment so that
- * Claude Code uses its own keyring auth rather than tokens that Bun
- * auto-loads from `.env`.
- *
- * @returns A copy of `process.env` without GitHub token variables.
- */
-function buildCleanEnv(): Record<string, string | undefined> {
-  const cleanEnv = { ...process.env }
-  delete cleanEnv.GITHUB_TOKEN
-  delete cleanEnv.GH_TOKEN
-  return cleanEnv
-}
+// buildCleanEnv is now imported from ./process
 
 /**
  * Checks whether a file should be skipped for AI explanation.
@@ -117,18 +104,18 @@ function buildPrompt(file: FileDiff): string {
 
   const patch = truncatePatch(file.patch || "")
 
-  return `You are a senior code reviewer. Explain this change concisely.
+  return `You are a senior code reviewer. Explain this change.
 
-PRIORITY (spend most effort here):
-1. What is the PURPOSE of this change? (bug fix, feature, refactor, config)
-2. What BEHAVIOR changes for users or other code?
+PRIORITY:
+1. WHY was this change made? (motivation, problem being solved)
+2. What IMPACT does it have? (behavior change, API change, risk areas)
+3. Any RISKS or concerns? (missing error handling, edge cases, breaking changes)
 
 CONSTRAINTS:
-- 1-2 sentences maximum
-- Focus on WHY and WHAT, not HOW
-- Use plain language, not code jargon
-- If the change is trivial (formatting, imports), say so briefly
-- "No issues found" is a valid response for trivial changes
+- 2-3 sentences. Be substantive, not vague.
+- Focus on WHY and IMPACT, not HOW (the diff shows how)
+- If trivial (formatting, imports), say so in one sentence
+- No markdown formatting
 
 File: ${file.filename}
 Status: ${file.status}
@@ -157,21 +144,17 @@ export async function explainFileDiff(file: FileDiff): Promise<string> {
   const prompt = buildPrompt(file)
 
   try {
-    const proc = Bun.spawn(["claude", "-p", "--model", "haiku", prompt], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: buildCleanEnv(),
-    })
-
-    const stdout = await new Response(proc.stdout).text()
-    const exitCode = await proc.exited
+    // Use safeSpawn to prevent fd leaks from Claude subprocesses
+    const { stdout, exitCode } = await safeSpawn(
+      ["claude", "-p", "--model", "sonnet", prompt],
+      { env: buildCleanEnv() },
+    )
 
     if (exitCode !== 0) {
       return "Failed to generate explanation."
     }
 
-    const explanation = stdout.trim()
-    return explanation || "No explanation generated."
+    return stdout || "No explanation generated."
   } catch {
     return "Error generating explanation."
   }
@@ -234,4 +217,65 @@ export async function explainAllDiffs(
   }
 
   return results
+}
+
+/**
+ * Generate a holistic PR-level narrative summarizing all changes.
+ *
+ * Unlike per-file explanations, this sends ALL diffs together to Claude
+ * (sonnet) so it can reason about the overall change. Returns a structured
+ * narrative covering: what the PR does, why, key decisions, risks, and
+ * what a reviewer should focus on.
+ *
+ * @param files - All file diffs in the PR.
+ * @param prDescription - The PR body/description text.
+ * @returns A multi-line narrative summary string.
+ */
+export async function explainPR(
+  files: FileDiff[],
+  prDescription: string,
+): Promise<string> {
+  const explainableFiles = files.filter(f => !shouldSkipFile(f))
+  if (explainableFiles.length === 0) return "No meaningful changes to summarize."
+
+  // Build combined diff context (truncate each file to keep total reasonable)
+  const fileSummaries = explainableFiles.map(f => {
+    const entities = extractEntities(f.patch || "")
+    const entityStr = entities.length > 0 ? ` (entities: ${entities.join(", ")})` : ""
+    const patch = truncatePatch(f.patch || "", 80) // Shorter per file since we send all
+    return `### ${f.filename} (${f.status}, +${f.additions} -${f.deletions})${entityStr}\n${patch}`
+  }).join("\n\n")
+
+  const prompt = `You are a senior code reviewer writing a PR summary for another reviewer.
+
+PR DESCRIPTION:
+${prDescription || "(no description provided)"}
+
+ALL FILE CHANGES:
+${fileSummaries}
+
+Write a concise review summary with these sections (use plain text, no markdown headers):
+
+WHAT: 1-2 sentences on what this PR does overall.
+WHY: Inferred motivation (from description, code patterns, commit style).
+KEY DECISIONS: Notable architectural or design choices visible in the diff.
+RISKS: Missing error handling, untested paths, potential regressions, edge cases.
+REVIEW FOCUS: Which files/areas a reviewer should look at most carefully and why.
+
+Keep the entire summary under 15 lines. Be specific, not generic.`
+
+  try {
+    const { stdout, exitCode } = await safeSpawn(
+      ["claude", "-p", "--model", "sonnet", prompt],
+      { env: buildCleanEnv() },
+    )
+
+    if (exitCode !== 0 || !stdout.trim()) {
+      return "Failed to generate PR summary."
+    }
+
+    return stdout.trim()
+  } catch {
+    return "Error generating PR summary."
+  }
 }

@@ -1,10 +1,11 @@
 ---
 # raft-oqla
 title: Collapsible unchanged code regions in diffs
-status: todo
+status: in-progress
 type: feature
+priority: normal
 created_at: 2026-03-16T15:51:45Z
-updated_at: 2026-03-16T15:51:45Z
+updated_at: 2026-03-17T05:45:07Z
 parent: raft-65vd
 ---
 
@@ -16,3 +17,8 @@ Requirements:
 - Keep N lines of context around each change (configurable, default 3)
 - Consider OpenTUI's diff component context prop if it supports this natively
 - Collapsing should make it much faster to scan through large diffs and focus on what changed
+
+
+
+---
+**In progress:** src/lib/diff-utils.ts has collapsible region infrastructure (CollapseRegion type, collapse toggle state). Needs UI component to render expand/collapse controls in panel-files.tsx.

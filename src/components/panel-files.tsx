@@ -75,10 +75,17 @@ function ExplanationBlock({ explanation, boxWidth }: { explanation: string; boxW
   const topLine = padLine("\u250C AI Summary ", boxWidth, "\u2500")
   const botLine = padLine("\u2514", boxWidth, "\u2500")
 
+  // Fix: render each line separately to prevent overflow on multi-line explanations
+  const lines = explanation.split("\n")
+
   return (
     <box flexDirection="column" marginY={1}>
       <box height={1}><text fg="#bb9af7">{topLine}</text></box>
-      <box height={1}><text fg="#bb9af7">{`\u2502 ${explanation}`}</text></box>
+      {lines.map((line, i) => (
+        <box key={`exp-${i}`} height={1}>
+          <text fg="#bb9af7">{`\u2502 ${line}`}</text>
+        </box>
+      ))}
       <box height={1}><text fg="#bb9af7">{botLine}</text></box>
     </box>
   )

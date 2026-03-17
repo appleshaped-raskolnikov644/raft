@@ -3,18 +3,8 @@ import { useKeyboard, useRenderer } from "@opentui/react"
 import { fetchRepoPRs, getCurrentRepo } from "../lib/github"
 import { detectStacks } from "../lib/stack"
 import { Spinner } from "../components/spinner"
+import { runGit } from "../lib/git-utils"
 import type { Stack, StackedPR } from "../lib/types"
-
-// Shared by create, up, down, restack commands
-
-async function runGit(args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], { stdout: "pipe", stderr: "pipe" })
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  const code = await proc.exited
-  if (code !== 0) throw new Error(stderr.trim() || `git ${args[0]} failed`)
-  return stdout.trim()
-}
 
 async function getCurrentBranch(): Promise<string> {
   return runGit(["rev-parse", "--abbrev-ref", "HEAD"])

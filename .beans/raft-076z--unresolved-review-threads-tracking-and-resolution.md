@@ -1,10 +1,11 @@
 ---
 # raft-076z
 title: Unresolved review threads tracking and resolution
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-03-16T15:53:01Z
-updated_at: 2026-03-16T15:53:01Z
+updated_at: 2026-03-17T05:44:45Z
 parent: raft-65vd
 ---
 
@@ -20,3 +21,8 @@ Requirements:
 - Consider grouping unresolved threads by file for easy navigation
 
 This directly addresses 'I don't know if I need to fix stuff because people left reviews' - the answer should be visible in 2 seconds.
+
+
+
+---
+**Completed:** src/lib/review-threads.ts implements full thread tracking: fetchReviewThreads(), groupThreadsByFile(), buildThreadSummary(). Thread model captures id, path, line, body, author, isResolved, replyCount. GitHub API functions for resolving threads (minimizeComment) and replying added to github.ts. Tests in review-threads.test.ts.

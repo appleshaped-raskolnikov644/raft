@@ -47,6 +47,12 @@ export interface PRDetails {
   commentCount: number
   reviews: Review[]
   headRefName: string
+  /** Count of unresolved review threads when available. */
+  unresolvedThreadCount?: number
+  /** Current CI status for the PR head when available. */
+  ciStatus?: "ready" | "pending" | "failing" | "unknown" | null
+  /** Whether the PR currently has merge conflicts. */
+  hasConflicts?: boolean
 }
 
 /** An issue-level comment on a pull request. */
@@ -67,6 +73,10 @@ export interface CodeComment {
   line: number
   diffHunk: string
   createdAt: string
+  /** GraphQL thread ID for resolving this thread. Populated when thread data is available. */
+  threadId?: string
+  /** Whether this comment's thread has been resolved. */
+  isResolved?: boolean
 }
 
 /** A single file's diff within a pull request. */
@@ -97,3 +107,30 @@ export type Density = "compact" | "normal" | "detailed" | "compressed"
 
 /** Active tab in the preview panel. */
 export type PanelTab = "body" | "comments" | "code" | "files"
+
+/** All possible lifecycle states for a PR. */
+export type PRLifecycleState =
+  | "MERGE_NOW"
+  | "FIX_REVIEW"
+  | "PING_REVIEWERS"
+  | "FIX_CI"
+  | "RESOLVE_CONFLICTS"
+  | "AI_REVIEW"
+  | "WAITING"
+  | "DRAFT"
+
+/** Lifecycle state info attached to a PR for attention-based sorting. */
+export interface PRLifecycleInfo {
+  /** Current lifecycle state. */
+  state: PRLifecycleState
+  /** Urgency score for sorting (0-100, higher = more urgent). */
+  urgency: number
+  /** Short badge label for the PR list. */
+  label: string
+  /** Badge color (hex). */
+  color: string
+  /** Description of what action is needed next. */
+  action: string
+  /** Keybind hint for the prompted action. */
+  keybind: string
+}

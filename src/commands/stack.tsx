@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, useRef } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
-import { fetchRepoPRs, fetchOpenPRs, getCurrentRepo, updatePRTitle, upsertStackComment, fetchPRPanelData } from "../lib/github"
+import { fetchRepoPRs, fetchOpenPRs, getCurrentRepo, updatePRTitle, upsertStackComment } from "../lib/github"
 import { detectStacks, buildStackComment, formatStackedTitle } from "../lib/stack"
 import { Spinner } from "../components/spinner"
 import { PreviewPanel } from "../components/preview-panel"
-import { PRCache } from "../lib/cache"
-import type { Stack, PullRequest, PanelTab, PRPanelData } from "../lib/types"
+import { usePanel } from "../hooks/usePanel"
+import type { Stack, PullRequest } from "../lib/types"
 
 interface StackCommandProps {
   repo?: string
@@ -70,15 +70,8 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
   const [syncDone, setSyncDone] = useState(false)
   const [loadingStatus, setLoadingStatus] = useState("Detecting stacks across your repos...")
 
-  // Selection and panel state
+  // Selection state
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [panelOpen, setPanelOpen] = useState(false)
-  const [panelTab, setPanelTab] = useState<PanelTab>("body")
-  const [panelFullscreen, setPanelFullscreen] = useState(false)
-  const [splitRatio, setSplitRatio] = useState(0.6)
-  const [panelData, setPanelData] = useState<PRPanelData | null>(null)
-  const [panelLoading, setPanelLoading] = useState(false)
-  const cacheRef = useRef(new PRCache())
 
   // Flatten all PRs for navigation
   const allPRs = useMemo(() => {
@@ -88,43 +81,9 @@ export function StackCommand({ repo, sync }: StackCommandProps) {
 
   const selectedPR = allPRs[selectedIndex] ?? null
 
-  // Panel data fetching
-  useEffect(() => {
-    if (!panelOpen || !selectedPR) return
-
-    const cache = cacheRef.current
-    const cached = cache.getPanelData(selectedPR.url)
-    if (cached) {
-      setPanelData(cached)
-      setPanelLoading(false)
-      return
-    }
-
-    setPanelLoading(true)
-    setPanelData(null)
-    fetchPRPanelData(selectedPR.repo, selectedPR.number)
-      .then((data) => {
-        cache.setPanelData(selectedPR.url, data)
-        setPanelData(data)
-      })
-      .catch(() => setPanelData(null))
-      .finally(() => setPanelLoading(false))
-  }, [panelOpen, selectedPR?.url])
-
-  // Prefetch neighbors
-  useEffect(() => {
-    if (!panelOpen) return
-    const cache = cacheRef.current
-
-    const neighbors = [allPRs[selectedIndex - 1], allPRs[selectedIndex + 1]].filter(Boolean)
-    for (const pr of neighbors) {
-      if (!cache.hasPanelData(pr.url)) {
-        fetchPRPanelData(pr.repo, pr.number)
-          .then((data) => cache.setPanelData(pr.url, data))
-          .catch(() => {})
-      }
-    }
-  }, [panelOpen, selectedIndex, allPRs])
+  // Panel state management (shared hook handles data fetching + caching + prefetching)
+  const { panelOpen, panelTab, splitRatio, panelFullscreen, panelData, panelLoading,
+    setPanelOpen, setPanelTab, setSplitRatio, setPanelFullscreen } = usePanel(selectedPR, allPRs, selectedIndex)
 
   useKeyboard((key) => {
     if (panelOpen) {

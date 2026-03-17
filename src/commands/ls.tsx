@@ -1,13 +1,16 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { PRTable } from "../components/pr-table"
 import { Spinner } from "../components/spinner"
 import { SkeletonList } from "../components/skeleton"
-import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, fetchPRPanelData, submitPRReview, postPRComment, replyToReviewComment } from "../lib/github"
+import { StatusView } from "../components/status-view"
+import { fetchOpenPRs, getCurrentRepo, fetchPRDetails, submitPRReview, postPRComment, replyToReviewComment, resolveReviewThread } from "../lib/github"
 import { shortRepoName } from "../lib/format"
-import { PRCache } from "../lib/cache"
 import { PreviewPanel } from "../components/preview-panel"
-import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData } from "../lib/types"
+import { usePanel } from "../hooks/usePanel"
+import { detectPRState, compareByUrgency } from "../lib/pr-lifecycle"
+import { findNextUnresolvedCommentIndex, getCodeCommentThreadStats, markThreadResolved } from "../lib/review-threads"
+import type { PullRequest, Density, PRDetails, PanelTab, PRPanelData, PRLifecycleInfo } from "../lib/types"
 import { groupByRepo, groupByStack, groupByRepoAndStack, type GroupMode, type GroupedData } from "../lib/grouping"
 
 interface LsCommandProps {
@@ -16,9 +19,10 @@ interface LsCommandProps {
 }
 
 type StatusFilter = "all" | "open" | "draft"
-type SortMode = "repo" | "number" | "title" | "age" | "status"
-const SORT_MODES: SortMode[] = ["repo", "number", "title", "age", "status"]
+type SortMode = "attention" | "repo" | "number" | "title" | "age" | "status"
+const SORT_MODES: SortMode[] = ["attention", "repo", "number", "title", "age", "status"]
 const SORT_LABELS: Record<SortMode, string> = {
+  attention: "Attention",
   repo: "Repo",
   number: "#",
   title: "Title",
@@ -38,23 +42,17 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
   const [searchQuery, setSearchQuery] = useState("")
   const [repoFilter, setRepoFilter] = useState<string | null>(initialRepoFilter ?? null)
   const [currentRepo, setCurrentRepo] = useState<string | null>(null)
-  const [sortMode, setSortMode] = useState<SortMode>("repo")
+  const [sortMode, setSortMode] = useState<SortMode>("attention")
   const [loadingStatus, setLoadingStatus] = useState("Loading PRs...")
   const [flash, setFlash] = useState<string | null>(null)
   const [density, setDensity] = useState<Density>("compact")
   const [detailsMap, setDetailsMap] = useState<Map<string, PRDetails>>(new Map())
   const [groupMode, setGroupMode] = useState<GroupMode>("none")
-  const [panelOpen, setPanelOpen] = useState(false)
-  const [panelTab, setPanelTab] = useState<PanelTab>("body")
-  const [splitRatio, setSplitRatio] = useState(0.6)
-  const [panelFullscreen, setPanelFullscreen] = useState(false)
-  const [panelData, setPanelData] = useState<PRPanelData | null>(null)
-  const [panelLoading, setPanelLoading] = useState(false)
   // Reply mode: composing a reply to a code comment
   const [replyMode, setReplyMode] = useState(false)
   const [replyText, setReplyText] = useState("")
   const [replyCommentId, setReplyCommentId] = useState<number | null>(null)
-  const cacheRef = useRef(new PRCache())
+  const [activeCodeCommentIndex, setActiveCodeCommentIndex] = useState(0)
 
   // Detect current repo on mount
   useEffect(() => {
@@ -127,6 +125,15 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     // Sort
     prs = [...prs].sort((a, b) => {
       switch (sortMode) {
+        case "attention": {
+          // Sort by lifecycle urgency score (computed below in lifecycleMap)
+          const aState = detailsMap.has(a.url) ? detectPRState(a, detailsMap.get(a.url)!) : detectPRState(a, null)
+          const bState = detailsMap.has(b.url) ? detectPRState(b, detailsMap.get(b.url)!) : detectPRState(b, null)
+          return compareByUrgency(
+            { urgency: aState.urgency, createdAt: a.createdAt },
+            { urgency: bState.urgency, createdAt: b.createdAt },
+          )
+        }
         case "repo": {
           const rc = a.repo.localeCompare(b.repo)
           return rc !== 0 ? rc : a.number - b.number
@@ -142,7 +149,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       }
     })
     return prs
-  }, [allPRs, repoFilter, authorFilter, statusFilter, searchQuery, sortMode])
+  }, [allPRs, repoFilter, authorFilter, statusFilter, searchQuery, sortMode, detailsMap])
 
   // Grouped data computation
   const groupedData = useMemo(() => {
@@ -164,8 +171,8 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     }
   }, [filteredPRs.length, selectedIndex])
 
+  // Always fetch details - needed for lifecycle state detection and attention sort
   useEffect(() => {
-    if (density === "compact" || density === "compressed") return
     if (filteredPRs.length === 0) return
 
     const cache = cacheRef.current
@@ -198,47 +205,30 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
       }
       setDetailsMap(map)
     })
-  }, [density, filteredPRs])
+  }, [filteredPRs])
 
   const selectedPR = filteredPRs[selectedIndex] ?? null
 
-  // Panel data fetching
-  useEffect(() => {
-    if (!panelOpen || !selectedPR) return
+  // Panel state management (shared hook handles data fetching + caching + prefetching)
+  const panel = usePanel(selectedPR, filteredPRs, selectedIndex)
+  const { panelOpen, panelTab, splitRatio, panelFullscreen, panelData, panelLoading,
+    setPanelOpen, setPanelTab, setSplitRatio, setPanelFullscreen, setPanelData, cacheRef } = panel
 
-    const cache = cacheRef.current
-    const cached = cache.getPanelData(selectedPR.url)
-    if (cached) {
-      setPanelData(cached)
-      setPanelLoading(false)
+  // Compute lifecycle state for the selected PR
+  const selectedLifecycle = useMemo<PRLifecycleInfo | null>(() => {
+    if (!selectedPR) return null
+    const details = detailsMap.get(selectedPR.url) ?? null
+    return detectPRState(selectedPR, details)
+  }, [selectedPR, detailsMap])
+
+  useEffect(() => {
+    if (!panelOpen || panelTab !== "code" || !panelData || panelData.codeComments.length === 0) {
+      setActiveCodeCommentIndex(0)
       return
     }
-
-    setPanelLoading(true)
-    setPanelData(null)
-    fetchPRPanelData(selectedPR.repo, selectedPR.number)
-      .then((data) => {
-        cache.setPanelData(selectedPR.url, data)
-        setPanelData(data)
-      })
-      .catch(() => setPanelData(null))
-      .finally(() => setPanelLoading(false))
-  }, [panelOpen, selectedPR?.url])
-
-  // Prefetch neighbors
-  useEffect(() => {
-    if (!panelOpen) return
-    const cache = cacheRef.current
-
-    const neighbors = [filteredPRs[selectedIndex - 1], filteredPRs[selectedIndex + 1]].filter(Boolean)
-    for (const pr of neighbors) {
-      if (!cache.hasPanelData(pr.url)) {
-        fetchPRPanelData(pr.repo, pr.number)
-          .then((data) => cache.setPanelData(pr.url, data))
-          .catch(() => {})
-      }
-    }
-  }, [panelOpen, selectedIndex, filteredPRs])
+    const nextIndex = findNextUnresolvedCommentIndex(panelData.codeComments, -1)
+    setActiveCodeCommentIndex(nextIndex >= 0 ? nextIndex : 0)
+  }, [panelOpen, panelTab, panelData])
 
   // Compute visible window: reserve 7 lines for header/tabs/repo/search/detail/keybinds
   const rowHeight = density === "detailed" ? 2 : 1
@@ -351,6 +341,51 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
           Bun.spawn(["open", selectedPR.url], { stdout: "ignore", stderr: "ignore" })
           showFlash("Opening " + selectedPR.url)
         }
+      } else if (key.name === "n" && panelTab === "code" && panelData) {
+        const nextIndex = findNextUnresolvedCommentIndex(panelData.codeComments, activeCodeCommentIndex)
+        if (nextIndex >= 0) {
+          setActiveCodeCommentIndex(nextIndex)
+          const nextComment = panelData.codeComments[nextIndex]
+          showFlash(`Next unresolved: ${nextComment.path}:${nextComment.line}`)
+        } else {
+          showFlash("No unresolved threads")
+        }
+      } else if (key.sequence === "R" && panelTab === "code" && panelData && selectedPR) {
+        const fallbackIndex = findNextUnresolvedCommentIndex(panelData.codeComments, -1)
+        const currentComment = panelData.codeComments[activeCodeCommentIndex]
+        const targetComment =
+          currentComment && currentComment.isResolved !== true && currentComment.threadId
+            ? currentComment
+            : (fallbackIndex >= 0 ? panelData.codeComments[fallbackIndex] : null)
+
+        if (!targetComment?.threadId) {
+          showFlash("No unresolved thread selected")
+        } else {
+          showFlash("Resolving thread...")
+          resolveReviewThread(targetComment.threadId)
+            .then(() => {
+              const updatedComments = markThreadResolved(panelData.codeComments, targetComment.threadId!)
+              const updatedPanelData = { ...panelData, codeComments: updatedComments }
+              setPanelData(updatedPanelData)
+              cacheRef.current.setPanelData(selectedPR.url, updatedPanelData)
+
+              setDetailsMap((prev) => {
+                const details = prev.get(selectedPR.url)
+                if (!details) return prev
+                const next = new Map(prev)
+                next.set(selectedPR.url, {
+                  ...details,
+                  unresolvedThreadCount: getCodeCommentThreadStats(updatedComments).unresolvedThreads,
+                })
+                return next
+              })
+
+              const nextIndex = findNextUnresolvedCommentIndex(updatedComments, activeCodeCommentIndex)
+              setActiveCodeCommentIndex(nextIndex >= 0 ? nextIndex : 0)
+              showFlash("Thread resolved")
+            })
+            .catch(() => showFlash("Failed to resolve thread"))
+        }
       } else if (key.name === "e" && panelTab === "files" && panelData && selectedPR) {
         // Generate AI explanations with progressive per-file updates
         showFlash("Generating explanations...")
@@ -377,14 +412,14 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         renderer.copyToClipboardOSC52(selectedPR.url)
         showFlash("Copied URL!")
       } else if (key.name === "r" && panelTab === "code" && panelData && selectedPR) {
-        // Reply to the most recent code comment
+        // Reply to the currently selected code comment
         const comments = panelData.codeComments
-        if (comments.length > 0) {
-          const lastComment = comments[comments.length - 1]
-          setReplyCommentId(lastComment.id)
+        const targetComment = comments[activeCodeCommentIndex] ?? comments[comments.length - 1]
+        if (targetComment) {
+          setReplyCommentId(targetComment.id)
           setReplyMode(true)
           setReplyText("")
-          showFlash(`Replying to @${lastComment.author} on ${lastComment.path}...`)
+          showFlash(`Replying to @${targetComment.author} on ${targetComment.path}...`)
         } else {
           showFlash("No code comments to reply to")
         }
@@ -505,6 +540,24 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
     } else if (key.name === "p") {
       setPanelOpen(true)
       setPanelTab("body")
+    } else if (key.name === "m" && selectedPR && selectedLifecycle?.state === "MERGE_NOW") {
+      // Lifecycle action: merge an approved PR
+      showFlash("Merging PR...")
+      import("../lib/git-utils").then(({ runGhMerge }) => {
+        runGhMerge(selectedPR.repo, selectedPR.number)
+          .then(() => showFlash(`Merged #${selectedPR.number}!`))
+          .catch((e) => showFlash(`Merge failed: ${e instanceof Error ? e.message : "unknown"}`))
+      })
+    } else if (key.sequence === "F" && selectedPR && selectedLifecycle?.state === "FIX_REVIEW") {
+      // Lifecycle action: open fix mode for review comments
+      // For now, open panel to code tab to show the threads
+      setPanelOpen(true)
+      setPanelTab("code")
+      showFlash("Showing review threads. (Full fix mode coming soon)")
+    } else if (key.sequence === "P" && selectedPR && selectedLifecycle?.state === "PING_REVIEWERS") {
+      // Lifecycle action: copy PR URL for pinging reviewers
+      renderer.copyToClipboardOSC52(selectedPR.url)
+      showFlash(`Copied URL for #${selectedPR.number}. Ping your reviewers!`)
     }
   })
 
@@ -622,6 +675,7 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
               panelData={panelData}
               loading={panelLoading}
               tab={panelTab}
+              activeCodeCommentIndex={activeCodeCommentIndex}
               width={panelFullscreen ? termWidth : Math.floor(termWidth * splitRatio)}
               height={termHeight - 6}
             />
@@ -648,50 +702,24 @@ export function LsCommand({ author, repoFilter: initialRepoFilter }: LsCommandPr
         </box>
       )}
 
-      {/* Detail panel */}
-      <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>
-        {selectedPR ? (
-          <>
-            <box flexDirection="row" height={1}>
-              <text>
-                <span fg="#bb9af7">{selectedPR.repo}</span>
-                <span fg="#9aa5ce"> #</span>
-                <span fg="#7aa2f7">{selectedPR.number}</span>
-              </text>
-            </box>
-            <box height={1}>
-              <text fg="#c0caf5">{selectedPR.title}</text>
-            </box>
-            <box height={1}>
-              <text fg="#9aa5ce">{selectedPR.url}</text>
-            </box>
-          </>
-        ) : (
+      {/* Status diagnostic view - shows lifecycle state, review summary, prompted action */}
+      {selectedPR ? (
+        <StatusView
+          pr={selectedPR}
+          details={detailsMap.get(selectedPR.url) ?? null}
+          lifecycle={selectedLifecycle}
+          flash={flash}
+          replyMode={replyMode}
+          replyText={replyText}
+          panelOpen={panelOpen}
+        />
+      ) : (
+        <box flexDirection="column" paddingX={1} paddingY={1} borderColor="#292e42" border>
           <box height={3}>
             <text fg="#9aa5ce">No PR selected</text>
           </box>
-        )}
-        <box flexDirection="row" height={1}>
-          {replyMode ? (
-            <text>
-              <span fg="#e0af68">reply: </span>
-              <span fg="#c0caf5">{replyText}</span>
-              <span fg="#7aa2f7">_</span>
-              <span fg="#6b7089"> (Enter: send, Esc: cancel)</span>
-            </text>
-          ) : flash ? (
-            <text fg="#9ece6a">{flash}</text>
-          ) : panelOpen ? (
-            <text fg="#6b7089">
-              1-4: tab  r: reply  e: explain  A: approve  X: req changes  f: fullscreen  +/-: resize  p: close  q: quit
-            </text>
-          ) : (
-            <text fg="#6b7089">
-              Enter: open  c: copy  /: search  a: author  r: repo  s: sort  v: view  g: group  p: preview  Tab: status  q: quit
-            </text>
-          )}
         </box>
-      </box>
+      )}
     </box>
   )
 }

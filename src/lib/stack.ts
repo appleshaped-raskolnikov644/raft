@@ -1,6 +1,23 @@
+/**
+ * Stack detection and management for stacked PR workflows.
+ *
+ * Detects parent-child PR relationships by matching branch names and provides
+ * utilities for building stack metadata comments and formatting PR titles.
+ */
+
 import type { PullRequest, Stack, StackedPR } from "./types"
 import { stripStackPrefix } from "./github"
 
+/**
+ * Detect stacked PRs by analyzing branch relationships.
+ *
+ * A stack is a chain of PRs where each PR's base branch is another PR's head branch.
+ * Roots are PRs with children that target non-PR branches (main, develop, etc).
+ * Returns one stack per detected root, in dependency order.
+ *
+ * @param prs - Array of pull requests with headRefName and baseRefName set
+ * @returns Array of detected stacks, each containing a linear chain of PRs
+ */
 export function detectStacks(prs: PullRequest[]): Stack[] {
   if (prs.length === 0) return []
 
@@ -53,6 +70,15 @@ export function detectStacks(prs: PullRequest[]): Stack[] {
   return stacks
 }
 
+/**
+ * Build a markdown table showing the full stack for a PR comment.
+ *
+ * Marks the current PR with `>>` and bolds its title for visibility.
+ *
+ * @param prs - Array of StackedPR objects in the stack (already numbered)
+ * @param currentPRNumber - The PR number of the PR the comment will be posted on
+ * @returns Markdown formatted stack table with header
+ */
 export function buildStackComment(prs: StackedPR[], currentPRNumber: number): string {
   const rows = prs.map((pr) => {
     const isCurrent = pr.number === currentPRNumber
@@ -70,6 +96,17 @@ export function buildStackComment(prs: StackedPR[], currentPRNumber: number): st
   ].join("\n")
 }
 
+/**
+ * Format a PR title with stack position notation.
+ *
+ * Adds `[n/m]` prefix to indicate the PR's position in the stack.
+ * Example: position=2, stackSize=4, title="Add auth" => "[2/4] Add auth"
+ *
+ * @param position - The PR's position in the stack (1-indexed)
+ * @param stackSize - Total number of PRs in the stack
+ * @param originalTitle - The PR's title without stack notation
+ * @returns Title with `[n/m]` prefix
+ */
 export function formatStackedTitle(position: number, stackSize: number, originalTitle: string): string {
   return `[${position}/${stackSize}] ${originalTitle}`
 }

@@ -19,6 +19,7 @@ import { PanelBody } from "./panel-body"
 import { PanelComments } from "./panel-comments"
 import { PanelCode } from "./panel-code"
 import { PanelFiles } from "./panel-files"
+import { getCodeCommentThreadStats } from "../lib/review-threads"
 
 /** Props for the {@link PreviewPanel} component. */
 interface PreviewPanelProps {
@@ -34,6 +35,8 @@ interface PreviewPanelProps {
   width: number
   /** Available height in rows. */
   height: number
+  /** Currently active code comment index for keyboard navigation. */
+  activeCodeCommentIndex?: number
 }
 
 /**
@@ -62,9 +65,9 @@ const SCROLLBOX_STYLE = {
  *
  * @param props - See {@link PreviewPanelProps}.
  */
-export function PreviewPanel({ pr, panelData, loading, tab, width, height }: PreviewPanelProps) {
+export function PreviewPanel({ pr, panelData, loading, tab, width, height, activeCodeCommentIndex = -1 }: PreviewPanelProps) {
   const commentCount = panelData?.comments.length ?? 0
-  const codeCount = panelData?.codeComments.length ?? 0
+  const codeCount = panelData ? getCodeCommentThreadStats(panelData.codeComments).totalThreads : 0
   const fileCount = panelData?.files.length ?? 0
   // 4 lines reserved: title, subtitle, divider, tab bar
   const contentHeight = Math.max(1, height - 4)
@@ -137,7 +140,11 @@ export function PreviewPanel({ pr, panelData, loading, tab, width, height }: Pre
               <PanelComments comments={panelData.comments} width={width - 4} />
             )}
             {tab === "code" && (
-              <PanelCode codeComments={panelData.codeComments} width={width - 4} />
+              <PanelCode
+                codeComments={panelData.codeComments}
+                width={width - 4}
+                activeIndex={activeCodeCommentIndex}
+              />
             )}
             {tab === "files" && (
               <PanelFiles files={panelData.files} width={width - 4} />

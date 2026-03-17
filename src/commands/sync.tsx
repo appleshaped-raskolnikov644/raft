@@ -2,6 +2,7 @@ import { useState, useEffect } from "react"
 import { useKeyboard, useRenderer } from "@opentui/react"
 import { getCurrentRepo } from "../lib/github"
 import { Spinner } from "../components/spinner"
+import { safeSpawn, buildCleanEnv } from "../lib/process"
 
 interface SyncCommandProps {
   repo?: string
@@ -16,22 +17,15 @@ interface BranchInfo {
 }
 
 async function runGit(args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", ...args], { stdout: "pipe", stderr: "pipe" })
-  const stdout = await new Response(proc.stdout).text()
-  const code = await proc.exited
-  if (code !== 0) throw new Error(`git ${args.join(" ")} failed`)
-  return stdout.trim()
+  const { stdout, exitCode } = await safeSpawn(["git", ...args])
+  if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`)
+  return stdout
 }
 
 async function runGh(args: string[]): Promise<string> {
-  const cleanEnv = { ...process.env }
-  delete cleanEnv.GITHUB_TOKEN
-  delete cleanEnv.GH_TOKEN
-  const proc = Bun.spawn(["gh", ...args], { stdout: "pipe", stderr: "pipe", env: cleanEnv })
-  const stdout = await new Response(proc.stdout).text()
-  const code = await proc.exited
-  if (code !== 0) throw new Error(`gh ${args.join(" ")} failed`)
-  return stdout.trim()
+  const { stdout, exitCode } = await safeSpawn(["gh", ...args], { env: buildCleanEnv() })
+  if (exitCode !== 0) throw new Error(`gh ${args.join(" ")} failed`)
+  return stdout
 }
 
 export function SyncCommand({ repo }: SyncCommandProps) {

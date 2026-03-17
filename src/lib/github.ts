@@ -1,5 +1,7 @@
 import type { PullRequest, PRDetails, Review, PRPanelData, Comment, CodeComment, FileDiff } from "./types"
 import { STACK_COMMENT_MARKER } from "./types"
+import { safeSpawn, buildCleanEnv } from "./process"
+import { hydrateCodeComments } from "./review-threads"
 
 interface RawSearchResult {
   number: number
@@ -13,6 +15,15 @@ interface RawSearchResult {
   author?: { login: string }
 }
 
+/**
+ * Parse GitHub search JSON results into PullRequest objects.
+ *
+ * Converts raw GitHub CLI JSON output from `gh search prs` into a normalized
+ * PullRequest array. Truncates body to first line and 80 characters.
+ *
+ * @param jsonStr - Raw JSON string from GitHub CLI search output
+ * @returns Array of normalized PullRequest objects
+ */
 export function parseSearchResults(jsonStr: string): PullRequest[] {
   const raw: RawSearchResult[] = JSON.parse(jsonStr)
   return raw.map((pr) => {
@@ -33,30 +44,31 @@ export function parseSearchResults(jsonStr: string): PullRequest[] {
   })
 }
 
+/**
+ * Remove stack numbering prefix from a PR title.
+ *
+ * Strips the `[n/m]` prefix that marks PR position in a stacked series.
+ * Example: `[2/4] Add auth` becomes `Add auth`.
+ *
+ * @param title - PR title potentially prefixed with stack notation
+ * @returns Title without the prefix
+ */
 export function stripStackPrefix(title: string): string {
   return title.replace(/^\[\d+\/\d+\]\s*/, "")
 }
 
 async function runGh(args: string[]): Promise<string> {
-  // Strip GITHUB_TOKEN and GH_TOKEN from env so gh CLI uses its own keyring auth.
-  // Bun auto-loads .env files, which may contain project-specific tokens that
-  // override gh's auth and cause 401 errors.
-  const cleanEnv = { ...process.env }
-  delete cleanEnv.GITHUB_TOKEN
-  delete cleanEnv.GH_TOKEN
-  const proc = Bun.spawn(["gh", ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: cleanEnv,
+  // Use safeSpawn to prevent fd leaks that caused segfaults after ~72s
+  const { stdout, stderr, exitCode } = await safeSpawn(["gh", ...args], {
+    env: buildCleanEnv(),
   })
-  const stdout = await new Response(proc.stdout).text()
-  const stderr = await new Response(proc.stderr).text()
-  const exitCode = await proc.exited
   if (exitCode !== 0) {
     throw new Error(`gh ${args.join(" ")} failed: ${stderr}`)
   }
-  return stdout.trim()
+  return stdout
 }
+
+type GhRunner = typeof runGh
 
 /** Get all authenticated gh account usernames. */
 export async function getGhAccounts(): Promise<string[]> {
@@ -152,6 +164,17 @@ export async function fetchAllAccountPRs(
   return allPRs
 }
 
+/**
+ * Fetch open pull requests for a specific author or all accessible repositories.
+ *
+ * - If `author` is undefined: fetches PRs across all authenticated accounts via `@me`.
+ * - If `author` is empty string: fetches all open PRs accessible to the current account.
+ * - If `author` is provided: fetches PRs by that specific author.
+ *
+ * @param author - GitHub username or empty string for all repos, undefined for @me across accounts
+ * @param onProgress - Optional callback for progress status messages
+ * @returns Array of open pull requests
+ */
 export async function fetchOpenPRs(
   author?: string,
   onProgress?: (status: string) => void,
@@ -242,10 +265,27 @@ export async function fetchRepoPRs(repo: string): Promise<PullRequest[]> {
   return []
 }
 
+/**
+ * Update a PR's title via the GitHub API.
+ *
+ * @param repo - Full repository name in `owner/repo` format
+ * @param prNumber - The pull request number
+ * @param title - New title for the PR
+ */
 export async function updatePRTitle(repo: string, prNumber: number, title: string): Promise<void> {
   await runGh(["pr", "edit", String(prNumber), "--repo", repo, "--title", title])
 }
 
+/**
+ * Find the ID of a stacked PR's metadata comment.
+ *
+ * Searches for an issue comment containing the STACK_COMMENT_MARKER.
+ * Used to locate and update stack information (rebase status, dependencies).
+ *
+ * @param repo - Full repository name in `owner/repo` format
+ * @param prNumber - The pull request number
+ * @returns Comment ID if found, null otherwise
+ */
 export async function findStackComment(repo: string, prNumber: number): Promise<number | null> {
   const json = await runGh([
     "api",
@@ -257,6 +297,16 @@ export async function findStackComment(repo: string, prNumber: number): Promise<
   return isNaN(id) ? null : id
 }
 
+/**
+ * Create or update a stacked PR's metadata comment.
+ *
+ * If a comment with STACK_COMMENT_MARKER exists, updates it. Otherwise creates a new one.
+ * Used to track rebase status and dependencies in stacked PR workflows.
+ *
+ * @param repo - Full repository name in `owner/repo` format
+ * @param prNumber - The pull request number
+ * @param body - Body content (without marker; marker is added automatically)
+ */
 export async function upsertStackComment(
   repo: string,
   prNumber: number,
@@ -281,6 +331,14 @@ export async function upsertStackComment(
   }
 }
 
+/**
+ * Get the current repository name from the working directory.
+ *
+ * Uses `gh repo view` to detect the repository that contains the current git checkout.
+ * Returns null if not in a git repository or gh cannot determine the repo.
+ *
+ * @returns Repository name in `owner/repo` format, or null if not in a repository
+ */
 export async function getCurrentRepo(): Promise<string | null> {
   try {
     const result = await runGh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
@@ -336,7 +394,7 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
     const [prJson, reviewsJson] = await Promise.all([
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}`,
-        "--jq", "{additions, deletions, comments, head: .head.ref}",
+        "--jq", "{additions, deletions, comments, headRefName: .head.ref, headSha: .head.sha, mergeable, mergeable_state: .mergeable_state}",
       ]),
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}/reviews`,
@@ -344,15 +402,34 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
       ]),
     ])
 
-    const pr = JSON.parse(prJson)
+    const pr = JSON.parse(prJson) as {
+      additions: number
+      deletions: number
+      comments: number
+      headRefName: string
+      headSha: string
+      mergeable: boolean | null
+      mergeable_state: string | null
+    }
     const reviews: Review[] = JSON.parse(reviewsJson)
+    const [ciStatus, reviewThreads] = await Promise.all([
+      fetchCIStatusWithRunner(repo, pr.headSha, runGh).catch(() => "unknown" as const),
+      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => null),
+    ])
+    const unresolvedThreadCount = reviewThreads !== null
+      ? reviewThreads.filter((thread) => !thread.isResolved).length
+      : -1
+    const hasConflicts = pr.mergeable === false || pr.mergeable_state === "dirty"
 
     return {
       additions: pr.additions,
       deletions: pr.deletions,
       commentCount: pr.comments,
       reviews,
-      headRefName: pr.head,
+      headRefName: pr.headRefName,
+      unresolvedThreadCount,
+      ciStatus,
+      hasConflicts,
     }
   })
 }
@@ -360,7 +437,7 @@ export async function fetchPRDetails(repo: string, prNumber: number): Promise<PR
 /** Fetch full PR data for the preview panel: body, conversation comments, code comments. */
 export async function fetchPRPanelData(repo: string, prNumber: number): Promise<PRPanelData> {
   return tryMultiAccountFetch(async () => {
-    const [bodyJson, issueCommentsJson, codeCommentsJson, filesJson] = await Promise.all([
+    const [bodyJson, issueCommentsJson, codeCommentsJson, filesJson, reviewThreads] = await Promise.all([
       runGh([
         "api", `repos/${repo}/pulls/${prNumber}`,
         "--jq", ".body",
@@ -377,11 +454,15 @@ export async function fetchPRPanelData(repo: string, prNumber: number): Promise<
         "api", `repos/${repo}/pulls/${prNumber}/files`,
         "--jq", "[.[] | {filename: .filename, status: .status, additions: .additions, deletions: .deletions, changes: .changes, patch: .patch, previousFilename: .previous_filename}]",
       ]),
+      fetchReviewThreadsWithRunner(repo, prNumber, runGh).catch(() => []),
     ])
 
     const body = bodyJson || ""
     const comments: Comment[] = JSON.parse(issueCommentsJson || "[]")
-    const codeComments: CodeComment[] = JSON.parse(codeCommentsJson || "[]")
+    const codeComments = hydrateCodeComments(
+      JSON.parse(codeCommentsJson || "[]") as CodeComment[],
+      reviewThreads,
+    )
     const files: FileDiff[] = JSON.parse(filesJson || "[]")
 
     return { body, comments, codeComments, files }
@@ -466,4 +547,152 @@ export async function postPRComment(
       "--field", `body=${body}`,
     ])
   })
+}
+
+/** A review thread with resolution status and associated comments. */
+export interface ReviewThread {
+  id: string
+  isResolved: boolean
+  comments: Array<{
+    id: number
+    author: string
+    body: string
+    path: string
+    line: number | null
+    createdAt: string
+  }>
+}
+
+/**
+ * Fetch review threads with resolution status via GraphQL.
+ *
+ * Uses the pullRequest.reviewThreads connection to get thread-level
+ * resolution state, which isn't available from the REST API.
+ *
+ * @param repo - Full repository name in owner/repo format.
+ * @param prNumber - The pull request number.
+ * @returns Array of review threads with their resolution status.
+ */
+export async function fetchReviewThreads(repo: string, prNumber: number): Promise<ReviewThread[]> {
+  return tryMultiAccountFetch(() => fetchReviewThreadsWithRunner(repo, prNumber, runGh))
+}
+
+async function fetchReviewThreadsWithRunner(
+  repo: string,
+  prNumber: number,
+  ghRunner: GhRunner,
+): Promise<ReviewThread[]> {
+  const [owner, name] = repo.split("/")
+  /**
+   * NOTE: Threads with >100 items or >50 comments per thread are truncated.
+   * Full pagination is deferred.
+   */
+  const query = `query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
+        reviewThreads(first: 100) {
+          nodes {
+            id
+            isResolved
+            comments(first: 50) {
+              nodes {
+                databaseId
+                author { login }
+                body
+                path
+                line
+                createdAt
+              }
+            }
+          }
+        }
+      }
+    }
+  }`
+
+  const result = await ghRunner([
+    "api", "graphql",
+    "-f", `query=${query}`,
+    "-F", `owner=${owner}`,
+    "-F", `name=${name}`,
+    "-F", `number=${prNumber}`,
+  ])
+  const data = JSON.parse(result)
+  const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []
+  return threads.map((t: any) => ({
+    id: t.id,
+    isResolved: t.isResolved,
+    comments: (t.comments?.nodes ?? []).filter((c: any) => c.databaseId != null).map((c: any) => ({
+      id: c.databaseId,
+      author: c.author?.login ?? "unknown",
+      body: c.body,
+      path: c.path,
+      line: c.line,
+      createdAt: c.createdAt,
+    })),
+  }))
+}
+
+/**
+ * Resolve a review thread via GraphQL mutation.
+ *
+ * @param threadId - The GraphQL node ID of the review thread to resolve.
+ */
+export async function resolveReviewThread(threadId: string): Promise<void> {
+  const query = `mutation {
+    resolveReviewThread(input: { threadId: "${threadId}" }) {
+      thread { id isResolved }
+    }
+  }`
+
+  return tryMultiAccountFetch(async () => {
+    await runGh(["api", "graphql", "-f", `query=${query}`])
+  })
+}
+
+/**
+ * Fetch CI check status for a PR's head commit.
+ *
+ * @param repo - Full repository name in owner/repo format.
+ * @param ref - Git ref (branch name or SHA) to check.
+ * @returns "ready" if all pass, "pending" if running, "failing" if any failed, "unknown" if status cannot be determined.
+ */
+export async function fetchCIStatus(repo: string, ref: string): Promise<"ready" | "pending" | "failing" | "unknown"> {
+  try {
+    return await tryMultiAccountFetch(() => fetchCIStatusWithRunner(repo, ref, runGh))
+  } catch {
+    return "unknown" // Can't determine status
+  }
+}
+
+async function fetchCIStatusWithRunner(
+  repo: string,
+  ref: string,
+  ghRunner: GhRunner,
+): Promise<"ready" | "pending" | "failing" | "unknown"> {
+  const result = await ghRunner(["api", `repos/${repo}/commits/${ref}/check-runs`, "--jq", ".check_runs"])
+  const checks = JSON.parse(result) as Array<{ status: string; conclusion: string | null }>
+  if (checks.length === 0) return "ready"
+  if (checks.some(c => ["failure", "timed_out", "cancelled", "action_required"].includes(c.conclusion ?? ""))) return "failing"
+  if (checks.some(c => c.status !== "completed")) return "pending"
+  return "ready"
+}
+
+/**
+ * Check if a PR has merge conflicts.
+ *
+ * @param repo - Full repository name in owner/repo format.
+ * @param prNumber - The pull request number.
+ * @returns true if the PR has merge conflicts.
+ */
+export async function fetchHasConflicts(repo: string, prNumber: number): Promise<boolean> {
+  try {
+    const result = await tryMultiAccountFetch(async () => {
+      return runGh(["pr", "view", String(prNumber), "--repo", repo, "--json", "mergeable,mergeStateStatus"])
+    })
+    const data = JSON.parse(result) as { mergeable: string; mergeStateStatus: string }
+    return data.mergeable === "CONFLICTING" || data.mergeStateStatus === "DIRTY"
+  } catch {
+    return false
+  }
 }

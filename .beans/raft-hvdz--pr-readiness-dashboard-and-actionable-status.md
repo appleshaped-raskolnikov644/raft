@@ -1,10 +1,11 @@
 ---
 # raft-hvdz
 title: PR readiness dashboard and actionable status
-status: todo
+status: completed
 type: feature
+priority: normal
 created_at: 2026-03-16T15:52:52Z
-updated_at: 2026-03-16T15:52:52Z
+updated_at: 2026-03-17T05:44:37Z
 parent: raft-65vd
 ---
 
@@ -29,3 +30,8 @@ Requirements:
 - Flash notification when a PR transitions to 'ready' state
 
 This is higher priority than fancy diff viewing because it solves the actual workflow pain: knowing what needs your attention.
+
+
+
+---
+**Completed:** Merged into raft-96v8. The lifecycle state machine IS the readiness dashboard - each PR gets a state badge showing exactly what action is needed. attentionSort() prioritizes by urgency. StatusView component provides the visual indicator.
